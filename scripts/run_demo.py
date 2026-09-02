@@ -32,6 +32,7 @@ from interactive_demo.loading import ModelLoadingMixin
 from interactive_demo.motion_io import MotionIOMixin
 from interactive_demo.playback import PlaybackMixin
 from interactive_demo.session_io import SessionIOMixin
+from interactive_demo.browser_backend import BrowserBackendMixin
 from interactive_demo.status import StatusMixin
 
 from ardy.tools import get_default_device
@@ -39,6 +40,7 @@ from ardy.tools import get_default_device
 
 class InteractiveTimelineDemo(
     StatusMixin,
+    BrowserBackendMixin,
     ModelLoadingMixin,
     MotionIOMixin,
     ClientMixin,
@@ -57,7 +59,8 @@ class InteractiveTimelineDemo(
     GuiIOMixin,
     PlaybackMixin,
 ):
-    def __init__(self, compile_model: bool = True, text_encoder_idle_timeout: float = DEFAULT_IDLE_TIMEOUT_S):
+    def __init__(self, compile_model: bool = True, text_encoder_idle_timeout: float = DEFAULT_IDLE_TIMEOUT_S,
+                 backend: str = "server", browser_ws_port: int = 2334, browser_http_port: int = 2335):
         self.device = get_default_device()
         if self.device == "cuda":
             self.device = "cuda:0"
@@ -72,6 +75,8 @@ class InteractiveTimelineDemo(
         lazy_encoder = IdleUnloadingTextEncoder(self._build_text_encoder, idle_timeout=text_encoder_idle_timeout)
         self.text_encoder = CachedTextEncoder(lazy_encoder, namespace=text_encoder_cache_namespace(lazy_encoder))
         self.init_status()  # Debug panel sampler + encoder event hooks
+        # Optional browser compute: serves web/ and takes text-only windows from a WebGPU worker page
+        self.init_browser_backend(default_backend=backend, ws_port=browser_ws_port, http_port=browser_http_port)
 
         # Prewarm the cache for the default prompt and Prompt List presets
         # on a background thread; the server must not wait on this.
@@ -159,10 +164,16 @@ def main() -> None:
         help="Seconds without a new prompt after which the text encoder is unloaded to free device memory; "
         "it is rebuilt by the next uncached prompt. 0 keeps it resident. Env: TEXT_ENCODER_IDLE_TIMEOUT.",
     )
+    parser.add_argument("--backend", choices=["server", "browser"], default=os.environ.get("ARDY_DEMO_BACKEND", "server"),
+                        help="Default generation backend per client: the server model, or the viewer's browser (WebGPU worker "
+                        "page at http://127.0.0.1:2335/hybrid.html; needs web/models/window.onnx from web/export_web_onnx.py).")
+    parser.add_argument("--browser-ws-port", type=int, default=2334)
+    parser.add_argument("--browser-http-port", type=int, default=2335)
     args = parser.parse_args()
 
     demo = InteractiveTimelineDemo(
-        compile_model=not args.no_compile, text_encoder_idle_timeout=args.text_encoder_idle_timeout
+        compile_model=not args.no_compile, text_encoder_idle_timeout=args.text_encoder_idle_timeout,
+        backend=args.backend, browser_ws_port=args.browser_ws_port, browser_http_port=args.browser_http_port,
     )
     demo.run()
 

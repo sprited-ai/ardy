@@ -149,6 +149,12 @@ python scripts/run_demo.py --no-compile                      # interactive demo 
   `~/.cache/ardy/text_embeddings/<encoder>/` (`ARDY_TEXT_EMBEDDING_CACHE_DIR`), one folder per encoder preset, so
   a prompt seen before never needs the encoder at all.
 - **Encoder fidelity:** int4 embeddings have cosine similarity ~0.98 to the int8 (near-lossless) ones.
+- **Browser compute (hybrid):** `python scripts/run_demo.py --backend browser` then open
+  `http://127.0.0.1:2335/hybrid.html` instead of port 2333: the same viser UI in an iframe plus a WebGPU worker
+  (onnxruntime-web, `web/models/window.onnx` from `web/export_web_onnx.py`) that computes every text-only window on the
+  viewer's GPU (~0.6 s per 2 s window round trip on an M1 Pro). The first window, windows with kinematic constraints,
+  other history lengths or step counts fall back to the server model automatically; the *Generation* dropdown in the
+  Model tab switches per client, and the Debug folder shows the worker state. `web/worker.html` runs the worker alone.
 - **Debug panel / progress:** the demo's *Debug* folder (bottom of the panel) shows process RSS and accelerator memory
   (current, held by the driver, peak) plus the text encoder's state (idle time, seconds until unload, last load/encode
   times). Encoding a prompt shows a toast that follows the encoder (reload after idle, encoding, done) and a bar under the

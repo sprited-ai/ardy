@@ -83,6 +83,14 @@ class GuiModelMixin:
                 ],
                 initial_value="ONNX-TRT (fp16)" if self.compile_model else "None",
             )
+            _backend_options = ["server (PyTorch)"] + (["browser (WebGPU worker)"] if getattr(self, "browser_backend", None) else [])
+            g.gui_generation_backend = client.gui.add_dropdown(
+                "Generation",
+                options=_backend_options,
+                initial_value=_backend_options[-1] if getattr(self, "default_backend", "server") == "browser" else _backend_options[0],
+                hint="browser: text-only windows are computed in the viewer's browser (onnxruntime-web on WebGPU) by the worker "
+                "page; constraints, the first window and non-default settings fall back to the server model.",
+            )
             _text_encoder_options = [
                 "cuda / bfloat16",
                 "cuda / float32",

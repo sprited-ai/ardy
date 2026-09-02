@@ -261,8 +261,12 @@ class GenerationMixin:
             init_global_translation = None
             init_first_heading_angle = None
 
-        # Generate motion
-        samples = session.model.autoregressive_step(
+        # Generate motion (on the server model, or in the viewer's browser when selected and possible)
+        backend = self.pick_generation_backend(
+            session, num_frames=num_frames, num_denoising_steps=session.gui_elements.gui_diffusion_steps_slider.value,
+            motion_mask=motion_mask, init_history_sequence=history_motion_tensor, num_samples=num_samples,
+        )
+        samples = backend.autoregressive_step(
             num_frames=num_frames,
             num_denoising_steps=session.gui_elements.gui_diffusion_steps_slider.value,
             motion_mask=motion_mask,

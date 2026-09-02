@@ -70,6 +70,9 @@ class StatusMixin:
         if accel:
             mem += (f"\n{accel['name']}: {accel['current'] / 1e9:.2f} GB live, "
                     f"{accel['driver'] / 1e9:.2f} GB held by driver, peak {self._accel_peak / 1e9:.2f} GB")
+        browser = self.browser_backend_status() if hasattr(self, "browser_backend_status") else None
+        if browser:
+            mem += "\n" + browser
         enc = "remote service or none (nothing to unload)"
         if self._lazy_encoder is not None:
             s = self._lazy_encoder.status()
