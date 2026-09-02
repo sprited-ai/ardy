@@ -16,6 +16,7 @@ from .loading import (
     instantiate_from_dict,
 )
 from .registry import hf_repo_id, resolve_model_name
+from ..tools import get_default_device
 
 DEFAULT_TEXT_ENCODER = "llm2vec"
 TEXT_ENCODER_PRESETS = {
@@ -104,6 +105,15 @@ def _select_text_encoder_conf(
         return _build_local_text_encoder_conf(text_encoder_fp32), None
 
 
+def text_encoder_half_dtype(device) -> torch.dtype:
+    """Half-precision dtype for the text encoder on ``device``.
+
+    bfloat16 everywhere except MPS: Apple Silicon (M1/M2 especially) has no native bf16 math, so
+    bf16 matmuls run ~2x slower than fp16 there.
+    """
+    return torch.float16 if str(device).startswith("mps") else torch.bfloat16
+
+
 def load_text_encoder(
     mode: Optional[str] = None,
     url: Optional[str] = None,
@@ -122,7 +132,7 @@ def load_text_encoder(
         url: Remote service URL. When None, falls back to the TEXT_ENCODER_URL
             env var.
         fp32: Use float32 instead of the default bfloat16.
-        device: Target device. When None, uses cuda if available else cpu.
+        device: Target device. When None, uses cuda, else mps, else cpu (see ``get_default_device``).
 
     Returns:
         The instantiated text encoder placed on ``device``.
@@ -151,8 +161,8 @@ def load_text_encoder(
         text_encoder = instantiate_from_dict(conf)
 
     if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    dtype = torch.float32 if fp32 else torch.bfloat16
+        device = get_default_device()
+    dtype = torch.float32 if fp32 else text_encoder_half_dtype(device)
     return text_encoder.to(device=device, dtype=dtype)
 
 

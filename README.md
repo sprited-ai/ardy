@@ -87,6 +87,35 @@ datasets/bones-seed/
     seed_metadata_v004.csv
 ```
 
+### Apple Silicon (macOS, MPS)
+
+ARDY also runs on Apple Silicon Macs through PyTorch's MPS backend. Device selection is automatic
+(`cuda` > `mps` > `cpu`, see `ardy.tools.get_default_device()`; override with `ARDY_DEVICE=cpu`), the text
+encoder runs in float16 on MPS (bf16 has no native math on M1/M2 and is ~2x slower there), and the demo's
+*Text Encoder* dropdown gains `mps / float16` entries.
+
+```bash
+# Python 3.12 venv (uv or plain venv); the macOS arm64 torch wheel already includes MPS.
+uv venv --python 3.12 .venv && source .venv/bin/activate
+uv pip install "torch>=2.10" pybind11
+# CMake 4 needs this for the pinned pybind11/Eigen versions fetched by the C++ extension build.
+CMAKE_POLICY_VERSION_MINIMUM=3.5 uv pip install -e ".[demo]"     # no [trt]: TensorRT is NVIDIA-only
+
+python scripts/generate.py "A person walks in a circle."
+python scripts/run_demo.py --no-compile                      # interactive demo (no TensorRT / torch.compile)
+```
+
+- **Memory:** the default text encoder (LLM2Vec on Llama-3-8B) is 16 GB in half precision and MPS caps one
+  process at about two thirds of unified memory (`torch.mps.recommended_max_memory()`), so it needs a 32 GB+
+  Mac. On smaller machines run the encoder elsewhere (`scripts/run_text_encoder_server.py` + `TEXT_ENCODER_URL`).
+- **Not available on macOS:** TensorRT (`[trt]` extra, *ONNX-TRT* acceleration modes). Keep the demo's
+  *Acceleration* dropdown on `None` (`--no-compile`): `torch.compile` (inductor) does run on MPS with
+  torch 2.10 but was 2x slower than eager here and its output diverged from eager, so it is not used.
+- `PYTORCH_ENABLE_MPS_FALLBACK=1` is not required; all ops used at inference have MPS kernels.
+- **Browser note:** if the demo page loads but the viewport never connects (server log shows
+  `websockets ... line too long`), open `http://127.0.0.1:2333` instead of `localhost`: a large cookie jar on
+  `localhost` can push the websocket handshake over the 8 KB header limit.
+
 ---
 
 ## Interactive Demo

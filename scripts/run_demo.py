@@ -31,6 +31,8 @@ from interactive_demo.motion_io import MotionIOMixin
 from interactive_demo.playback import PlaybackMixin
 from interactive_demo.session_io import SessionIOMixin
 
+from ardy.tools import get_default_device
+
 
 class InteractiveTimelineDemo(
     ModelLoadingMixin,
@@ -52,7 +54,9 @@ class InteractiveTimelineDemo(
     PlaybackMixin,
 ):
     def __init__(self, compile_model: bool = True):
-        self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        self.device = get_default_device()
+        if self.device == "cuda":
+            self.device = "cuda:0"
         print(f"Using device: {self.device}")
 
         # Built once and reused across all model loads (core / g1 / soma).

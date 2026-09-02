@@ -4,6 +4,7 @@
 import inspect
 import json
 import math
+import os
 import random
 from collections.abc import Mapping, Sequence
 from functools import wraps
@@ -227,12 +228,29 @@ def to_torch(obj, device=None, dtype=None):
     return obj
 
 
+def get_default_device() -> str:
+    """Best available torch device: ``"cuda"`` > ``"mps"`` (Apple Silicon) > ``"cpu"``.
+
+    Overridable with the ``ARDY_DEVICE`` env var (e.g. ``ARDY_DEVICE=cpu``).
+    """
+    env = os.environ.get("ARDY_DEVICE")
+    if env:
+        return env
+    if torch.cuda.is_available():
+        return "cuda"
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def seed_everything(seed: int, deterministic: bool = False) -> None:
     """Seed all random number generators."""
     random.seed(seed)  # for Python random module.
     np.random.seed(seed)  # for NumPy.
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        torch.mps.manual_seed(seed)
     if deterministic:
         torch.backends.cudnn.deterministic = True  # for deterministic behavior.
         torch.backends.cudnn.benchmark = False  # if you want to make the behavior deterministic.

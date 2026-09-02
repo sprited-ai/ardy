@@ -329,7 +329,9 @@ class LLM2Vec(nn.Module):
             sentences = [[""] + [sentence] for sentence in sentences]
 
         if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            from ardy.tools import get_default_device
+
+            device = get_default_device()
 
         concatenated_input_texts = []
         for sentence in sentences:
