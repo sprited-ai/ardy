@@ -37,8 +37,11 @@ open http://127.0.0.1:8765/      # pick a prompt, press Start
 
 ## Known gaps / next
 
-- **Size**: 813 MB fp32. `onnxconverter-common`'s fp16 pass produces a graph onnxruntime rejects (mismatched Cast
-  types inside attention); weight-only 8-bit `MatMulNBits` (supported by the WebGPU EP) is the better route (~200 MB).
+- **Size**: 813 MB fp32. Two shortcuts tried and rejected: `onnxconverter-common`'s fp16 pass yields a graph onnxruntime
+  rejects (mismatched Cast types inside attention), and onnxruntime's 8-bit `MatMulNBits` quantizer made the file *larger*
+  (877 MB: the 10 unrolled steps share weights it does not dedupe) with a visible error (joints off by 1.7 cm on average,
+  16 cm max). Next candidates: export the denoiser in half precision from PyTorch directly (`model.half()` with the
+  sampler / FK kept in fp32), or a `Loop`-based graph so the denoiser weights appear once and can be quantized per block.
 - Token count is baked into the decoder reshape at export, so the graph is fixed at 4 + 40 frames; a different history
   length or horizon needs a re-export.
 - No kinematic constraints / waypoints, no `motion_correction` post-processing (C++ extension) in the browser.
