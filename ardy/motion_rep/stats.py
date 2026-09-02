@@ -71,16 +71,30 @@ class Stats(torch.nn.Module):
         # the per-call sqrt.
         self.register_buffer("std_eps", torch.sqrt(std**2 + self.eps), persistent=False)
 
+    def _stats_like(self, data: torch.Tensor):
+        """``(mean, std_eps)`` on ``data``'s device and dtype.
+
+        Stats objects are often held by plain (non-``nn.Module``) owners such as ``MotionRepBase`` and
+        so never see the model's ``.to(device)``. Instead of re-copying the buffers host->device on
+        every call (a sync per call on MPS/CUDA), move them once and keep them there.
+        """
+        if self.mean.device != data.device:
+            self.mean = self.mean.to(data.device)  # assignment replaces the registered buffers
+            self.std = self.std.to(data.device)
+            self.std_eps = self.std_eps.to(data.device)
+        mean, std_eps = self.mean, self.std_eps
+        if mean.dtype != data.dtype:
+            mean, std_eps = mean.to(data.dtype), std_eps.to(data.dtype)
+        return mean, std_eps
+
     def normalize(self, data: torch.Tensor) -> torch.Tensor:
         """Normalize data using the stored statistics."""
-        mean = self.mean.to(device=data.device, dtype=data.dtype)
-        std_eps = self.std_eps.to(device=data.device, dtype=data.dtype)
+        mean, std_eps = self._stats_like(data)
         return (data - mean) / std_eps
 
     def unnormalize(self, data: torch.Tensor) -> torch.Tensor:
         """Undo normalization using the stored statistics."""
-        mean = self.mean.to(device=data.device, dtype=data.dtype)
-        std_eps = self.std_eps.to(device=data.device, dtype=data.dtype)
+        mean, std_eps = self._stats_like(data)
         return data * std_eps + mean
 
     def is_loaded(self):

@@ -284,8 +284,10 @@ class DoubleCondDecoderTransformer(nn.Module):
             src_key_padding_mask = ~token_pad_mask
         else:
             src_key_padding_mask = None
+        # is_causal is passed explicitly: without it nn.TransformerEncoder compares the mask
+        # against a generated causal mask (torch.equal -> a device sync) on every call.
         h = self.seqTransEncoder(
-            h, mask=attention_mask, src_key_padding_mask=src_key_padding_mask
+            h, mask=attention_mask, src_key_padding_mask=src_key_padding_mask, is_causal=self.is_causal
         )  # transformer encoder layers
         h = self.output_proj(h)  # output projection
         h = rearrange(h, "b t (f d) -> b (t f) d", f=self.num_frames_per_token)  # [batch, num_frames, output_dim]
