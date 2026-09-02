@@ -8,13 +8,15 @@ mixins into ``InteractiveTimelineDemo`` and exposes the Hydra ``main`` entry poi
 """
 
 import argparse
+import os
 
 from interactive_demo.camera import CameraMixin
 from interactive_demo.characters import CharactersMixin
 from interactive_demo.client import ClientMixin
 from interactive_demo.common import *  # noqa: F401,F403
 from interactive_demo.constraints import ConstraintsMixin
-from interactive_demo.embedding_cache import CachedTextEncoder
+from interactive_demo.embedding_cache import CachedTextEncoder, text_encoder_cache_namespace
+from interactive_demo.text_encoder_lifecycle import DEFAULT_IDLE_TIMEOUT_S, IdleUnloadingTextEncoder
 from interactive_demo.gen_constraints import GenConstraintsMixin
 from interactive_demo.generation import GenerationMixin
 from interactive_demo.gui import (
@@ -53,16 +55,20 @@ class InteractiveTimelineDemo(
     GuiIOMixin,
     PlaybackMixin,
 ):
-    def __init__(self, compile_model: bool = True):
+    def __init__(self, compile_model: bool = True, text_encoder_idle_timeout: float = DEFAULT_IDLE_TIMEOUT_S):
         self.device = get_default_device()
         if self.device == "cuda":
             self.device = "cuda:0"
         print(f"Using device: {self.device}")
 
-        # Built once and reused across all model loads (core / g1 / soma).
-        # Wrapped in a disk-backed cache so repeated/preset prompts skip
-        # re-encoding, both within a session and across demo restarts.
-        self.text_encoder = CachedTextEncoder(self._build_text_encoder())
+        # One shared text encoder for all model loads (core / g1 / soma) and clients. It is
+        # loaded now so the first prompt is fast, unloaded after `text_encoder_idle_timeout`
+        # seconds without a new prompt (returns ~5 GB on a 16 GB MPS machine) and rebuilt by the
+        # next prompt that is not already cached. The cache layer on top persists embeddings
+        # per encoder in ~/.cache/ardy/text_embeddings across restarts, so cached prompts never
+        # need the encoder at all.
+        lazy_encoder = IdleUnloadingTextEncoder(self._build_text_encoder, idle_timeout=text_encoder_idle_timeout)
+        self.text_encoder = CachedTextEncoder(lazy_encoder, namespace=text_encoder_cache_namespace(lazy_encoder))
 
         # Prewarm the cache for the default prompt and Prompt List presets
         # on a background thread; the server must not wait on this.
@@ -143,9 +149,18 @@ def main() -> None:
         action="store_true",
         help="Do not compile the model (initial backend is 'None' instead of 'ONNX-TRT (fp16)').",
     )
+    parser.add_argument(
+        "--text-encoder-idle-timeout",
+        type=float,
+        default=float(os.environ.get("TEXT_ENCODER_IDLE_TIMEOUT", DEFAULT_IDLE_TIMEOUT_S)),
+        help="Seconds without a new prompt after which the text encoder is unloaded to free device memory; "
+        "it is rebuilt by the next uncached prompt. 0 keeps it resident. Env: TEXT_ENCODER_IDLE_TIMEOUT.",
+    )
     args = parser.parse_args()
 
-    demo = InteractiveTimelineDemo(compile_model=not args.no_compile)
+    demo = InteractiveTimelineDemo(
+        compile_model=not args.no_compile, text_encoder_idle_timeout=args.text_encoder_idle_timeout
+    )
     demo.run()
 
 

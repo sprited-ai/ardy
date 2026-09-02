@@ -21,11 +21,24 @@ from typing import Optional
 import numpy as np
 import torch
 
-# Relative to the working directory the demo is launched from, matching the
-# other ".cache/..." defaults used throughout interactive_demo (gui/io.py,
-# gui/visualize.py, motion_io.py).
-DEFAULT_CACHE_DIR = os.path.join(".cache", "text_embeddings")
+# A fixed per-user location (not the launch directory) so the cache survives demo restarts and
+# launches from other working directories. Override with ARDY_TEXT_EMBEDDING_CACHE_DIR. Entries are
+# namespaced per text encoder (see text_encoder_cache_namespace): int4, int8 and bf16 encoders
+# produce different embeddings for the same prompt.
+DEFAULT_CACHE_DIR = os.environ.get("ARDY_TEXT_EMBEDDING_CACHE_DIR") or os.path.join(
+    os.path.expanduser("~"), ".cache", "ardy", "text_embeddings"
+)
 DEFAULT_MAX_MEM_ENTRIES = 128
+
+
+def text_encoder_cache_namespace(encoder) -> str:
+    """Cache sub-directory for ``encoder``: the local preset name (``llm2vec-int4`` ...) or ``api``
+    for the remote service, so switching encoders never serves another encoder's embeddings."""
+    if type(encoder).__name__ == "TextEncoderAPI" or getattr(encoder, "client", None) is not None:
+        return "api"
+    from ardy.model.load_model import default_text_encoder_name
+
+    return os.environ.get("TEXT_ENCODER") or default_text_encoder_name()
 
 
 def _normalize_texts(texts) -> list[str]:
@@ -55,12 +68,12 @@ class EmbeddingCache:
 
     @staticmethod
     def _make_key(text: str) -> str:
-        # Keyed on the raw prompt text only. The text encoder is shared
-        # across every loaded model, and entries are always stored as
-        # float32 regardless of the encoder's current precision — serving a
-        # float32-stored embedding under either the bf16 or fp32 dropdown
-        # setting is acceptable for this demo, so the key doesn't need to
-        # encode device/dtype.
+        # Keyed on the raw prompt text only; which encoder produced the entry
+        # is carried by the cache directory (text_encoder_cache_namespace).
+        # Entries are always stored as float32 regardless of the encoder's
+        # current precision — serving a float32-stored embedding under either
+        # the bf16 or fp32 dropdown setting is acceptable for this demo, so
+        # the key doesn't need to encode device/dtype.
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     def _entry_path(self, key: str) -> str:
@@ -211,8 +224,11 @@ class CachedTextEncoder:
         encoder,
         cache_dir: str = DEFAULT_CACHE_DIR,
         max_mem_entries: int = DEFAULT_MAX_MEM_ENTRIES,
+        namespace: Optional[str] = None,
     ) -> None:
         self.encoder = encoder
+        if namespace:
+            cache_dir = os.path.join(cache_dir, namespace)
         self.cache = EmbeddingCache(cache_dir=cache_dir, max_mem_entries=max_mem_entries)
         self._device, self._dtype = _probe_device_dtype(encoder)
 

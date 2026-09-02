@@ -143,6 +143,11 @@ python scripts/run_demo.py --no-compile                      # interactive demo 
 - **Browser note:** if the demo page loads but the viewport never connects (server log shows
   `websockets ... line too long`), open `http://127.0.0.1:2333` instead of `localhost`: a large cookie jar on
   `localhost` can push the websocket handshake over the 8 KB header limit.
+- **Text encoder lifetime in the demo:** loaded at launch, unloaded after 5 minutes without a new prompt
+  (`--text-encoder-idle-timeout SECONDS` / `TEXT_ENCODER_IDLE_TIMEOUT`; `0` keeps it resident) and rebuilt by the
+  next uncached prompt (~7 s on an M1 Pro for int4: ~2 s load plus one-time weight packing). Prompt embeddings persist across restarts in
+  `~/.cache/ardy/text_embeddings/<encoder>/` (`ARDY_TEXT_EMBEDDING_CACHE_DIR`), one folder per encoder preset, so
+  a prompt seen before never needs the encoder at all.
 - **Encoder fidelity:** int4 embeddings have cosine similarity ~0.98 to the int8 (near-lossless) ones.
   `TEXT_ENCODER=llm2vec-int8` is a drop-in higher-fidelity option when ~9 GB of MPS memory is free.
 

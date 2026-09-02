@@ -5,6 +5,8 @@
 
 from ardy.tools import get_default_device
 
+from ..text_encoder_lifecycle import release_accelerator_memory
+
 from ..common import *  # noqa: F401,F403
 
 
@@ -98,7 +100,8 @@ class GuiModelMixin:
                 "Text Encoder",
                 options=_text_encoder_options,
                 initial_value=_text_encoder_initial,
-                hint="Set device + precision for the text encoder. Switching to cpu releases CUDA memory.",
+                hint="Set device + precision for the text encoder (applied to future reloads too). "
+                "Switching to cpu releases CUDA/MPS memory.",
             )
 
             @g.gui_text_encoder_mode.on_update
@@ -119,12 +122,10 @@ class GuiModelMixin:
                 try:
                     encoder.to(device=device_str, dtype=dtype)
                     # Drop lingering Python refs to the old tensors, then return
-                    # cached CUDA blocks to the driver. synchronize() ensures
-                    # all in-flight ops on the old buffers have completed.
-                    gc.collect()
+                    # cached CUDA/MPS blocks to the driver (synchronizes first so
+                    # in-flight ops on the old buffers have completed).
+                    release_accelerator_memory()
                     if torch.cuda.is_available():
-                        torch.cuda.synchronize()
-                        torch.cuda.empty_cache()
                         torch.cuda.reset_peak_memory_stats()
                 except Exception as e:
                     if notify_client:
