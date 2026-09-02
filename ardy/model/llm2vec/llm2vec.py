@@ -128,9 +128,18 @@ class LLM2Vec(nn.Module):
         config = AutoConfig.from_pretrained(base_model_name_or_path)
         config_class_name = config.__class__.__name__
 
-        model_class = cls._get_model_class(config_class_name, enable_bidirectional=enable_bidirectional)
+        from .quantized import is_quantized_checkpoint, load_quantized_llama_encoder
 
-        model = model_class.from_pretrained(base_model_name_or_path, **kwargs)
+        if is_quantized_checkpoint(base_model_name_or_path):
+            # ARDY weight-only int4/int8 checkpoint (LoRA already merged, no PEFT needed).
+            # See scripts/merge_llm2vec_lora.py.
+            assert config_class_name == "LlamaConfig", config_class_name
+            assert peft_model_name_or_path is None, "quantized checkpoints already include the LoRA adapters"
+            dtype = kwargs.get("dtype", kwargs.get("torch_dtype", torch.float16))
+            model = load_quantized_llama_encoder(base_model_name_or_path, dtype=dtype)
+        else:
+            model_class = cls._get_model_class(config_class_name, enable_bidirectional=enable_bidirectional)
+            model = model_class.from_pretrained(base_model_name_or_path, **kwargs)
 
         if os.path.isdir(base_model_name_or_path) and os.path.exists(f"{base_model_name_or_path}/config.json"):
             with open(f"{base_model_name_or_path}/config.json", "r") as fIn:
@@ -329,7 +338,9 @@ class LLM2Vec(nn.Module):
             sentences = [[""] + [sentence] for sentence in sentences]
 
         if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            from ardy.tools import get_default_device
+
+            device = get_default_device()
 
         concatenated_input_texts = []
         for sentence in sentences:

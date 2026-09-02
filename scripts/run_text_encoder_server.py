@@ -70,7 +70,7 @@ def parse_args():
     parser.add_argument(
         "--device",
         default=_get_env("TEXT_ENCODER_DEVICE", None),
-        help='Device for the text encoder, e.g. "cpu", "cuda" or "cuda:1". Defaults to cuda if available, else cpu.',
+        help='Device for the text encoder, e.g. "cpu", "cuda", "cuda:1" or "mps". Defaults to cuda, else mps, else cpu.',
     )
     return parser.parse_args()
 

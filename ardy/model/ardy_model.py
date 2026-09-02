@@ -71,6 +71,8 @@ class Ardy(nn.Module):
 
         self.num_frames_per_token = self.autoencoder.num_frames_per_token
 
+        self._cfg_cache: dict = {}
+
         self.device = device
         self.to(device)
 
@@ -228,6 +230,21 @@ class Ardy(nn.Module):
                 log.info("Warmup iteration %d/%d complete.", i + 1, num_iterations)
         log.info("Warmup complete.")
 
+    def _cfg_weight_tensors(self, w_text: float, w_cstr: float, device) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Guidance weights as 1-element device tensors, cached so the denoising loop does not
+        upload two scalars per step (a host->device copy each, which serialises MPS/CUDA work)."""
+        key = (w_text, w_cstr, str(device))
+        cached = self._cfg_cache.get(key)
+        if cached is None:
+            cached = (
+                torch.tensor([w_text], device=device, dtype=torch.float32),
+                torch.tensor([w_cstr], device=device, dtype=torch.float32),
+            )
+            if len(self._cfg_cache) > 64:
+                self._cfg_cache.clear()
+            self._cfg_cache[key] = cached
+        return cached
+
     def denoising_step(
         self,
         x: torch.Tensor,
@@ -250,18 +267,23 @@ class Ardy(nn.Module):
         cfg_weight: Union[float, Tuple[float, float]],
         target_motion: Optional[torch.Tensor] = None,
         cfg_type: Optional[str] = None,
+        generation_token_slice: Optional[Tuple[int, int]] = None,
     ) -> torch.Tensor:
         """Single denoising step.
+
+        ``generation_token_slice`` optionally gives the generation tokens as a contiguous
+        ``[start, end)`` token range (always the case without token sparsification); it is then used
+        instead of ``generation_token_mask`` so the step needs no boolean-mask gather (a host sync on
+        MPS/CUDA).
 
         Returns:
             torch.Tensor: [B, T, D] noisy motion input to t-1
         """
         # subsample timesteps
-        #   NOTE: do this at every step due to ONNX export, i.e. num_samp_stepsmay change dynamically when
-        #       running onnx version so need to account for that.
-        num_denoising_steps = num_denoising_steps[0]
-        use_timesteps, map_tensor = self.diffusion.space_timesteps(num_denoising_steps)
-        self.diffusion.calc_diffusion_vars(use_timesteps)
+        #   NOTE: checked at every step due to ONNX export, i.e. num_denoising_steps may change
+        #       dynamically when running the onnx version. ensure_schedule caches the result, so this
+        #       is free after the first step.
+        map_tensor = self.diffusion.ensure_schedule(num_denoising_steps)
 
         # first compute initial clean prediction from denoiser
         t_map = map_tensor[t]
@@ -273,8 +295,7 @@ class Ardy(nn.Module):
             w_text, w_cstr = cfg_weight
         else:
             w_text, w_cstr = cfg_weight, 0.0
-        cfg_weight_text = torch.tensor([w_text], device=x.device, dtype=torch.float32)
-        cfg_weight_cstr = torch.tensor([w_cstr], device=x.device, dtype=torch.float32)
+        cfg_weight_text, cfg_weight_cstr = self._cfg_weight_tensors(float(w_text), float(w_cstr), x.device)
 
         with torch.inference_mode():
             token_seq_pred_clean = self.denoiser(
@@ -301,6 +322,12 @@ class Ardy(nn.Module):
         # sampler computes next step noisy motion
         batch_size, num_token_dim = x.shape[0], x.shape[2]
         num_generation_tokens = self.gen_horizon_len // self.num_frames_per_token
+        if generation_token_slice is not None:
+            start, end = generation_token_slice
+            generation_token_tm1 = self.sampler(x[:, start:end], token_seq_pred_clean[:, start:end], t)
+            xm1 = x.clone()
+            xm1[:, start:end] = generation_token_tm1
+            return xm1
         generation_token_t = x[generation_token_mask].reshape(batch_size, num_generation_tokens, num_token_dim)
         generation_token_clean = token_seq_pred_clean[generation_token_mask].reshape(
             batch_size, num_generation_tokens, num_token_dim
@@ -490,7 +517,7 @@ class Ardy(nn.Module):
         x[:, history_token_end:generation_token_end] = x_t
 
         for i in progress_bar(indices):
-            t = torch.tensor([i] * x_t.size(0), device=device)
+            t = torch.full((x_t.size(0),), i, device=device, dtype=torch.long)
             with torch.no_grad():
                 x = self.denoising_step(
                     x,
@@ -513,6 +540,7 @@ class Ardy(nn.Module):
                     cfg_weight,
                     target_motion,
                     cfg_type=cfg_type,
+                    generation_token_slice=(history_token_end, generation_token_end),
                 )
 
         #  update the full history sequence
@@ -624,8 +652,7 @@ class Ardy(nn.Module):
             [num_denoising_steps], device=self.device
         )  # this and t need to be tensor for onnx export
         # init diffusion with correct num steps before looping
-        use_timesteps = self.diffusion.space_timesteps(num_denoising_steps[0])[0]
-        self.diffusion.calc_diffusion_vars(use_timesteps)
+        self.diffusion.ensure_schedule(num_denoising_steps)
 
         for auto_step in range(num_autoregressive_steps):
             history_end_frame = auto_step * gen_horizon_len + init_history_len
@@ -736,8 +763,7 @@ class Ardy(nn.Module):
         # Init diffusion with correct num steps
         indices = list(range(num_denoising_steps))[::-1]
         num_denoising_steps_tensor = torch.tensor([num_denoising_steps], device=self.device)
-        use_timesteps = self.diffusion.space_timesteps(num_denoising_steps_tensor[0])[0]
-        self.diffusion.calc_diffusion_vars(use_timesteps)
+        self.diffusion.ensure_schedule(num_denoising_steps_tensor)
 
         # process init history sequence
         init_history_len = 0 if init_history_sequence is None else init_history_sequence.shape[1]

@@ -24,7 +24,7 @@ from ardy.model.registry import resolve_model_name
 from ardy.motion_rep.tools import length_to_mask
 from ardy.postprocess import post_process_motion
 from ardy.skeleton import SOMASkeleton30
-from ardy.tools import seed_everything, to_numpy
+from ardy.tools import get_default_device, seed_everything, to_numpy
 
 
 def parse_args():
@@ -165,7 +165,9 @@ def save_motion_npz(path: str, motion_dict: dict, fps: float, text: str) -> None
 
 
 def main():
-    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    device = get_default_device()
+    if device == "cuda":
+        device = "cuda:0"
     print(f"Using device: {device}")
 
     args = parse_args()

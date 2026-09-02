@@ -4,6 +4,7 @@
 """Part of InteractiveTimelineDemo (split for readability)."""
 
 from ardy.assets import skeleton_asset_path
+from ardy.tools import get_default_device
 
 from .common import *  # noqa: F401,F403
 
@@ -18,8 +19,7 @@ class ModelLoadingMixin:
         never loaded more than once; the result is passed into ``load_model(..., text_encoder=...)``
         on each load.
         """
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        return load_text_encoder(mode="auto", device=device)
+        return load_text_encoder(mode="auto", device=get_default_device())
 
     def get_skeleton_info(self, model_skeleton):
         """Detect skeleton type from model and return appropriate class and mesh mode.

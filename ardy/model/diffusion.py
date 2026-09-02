@@ -37,8 +37,12 @@ class Diffusion(torch.nn.Module):
         self.register_buffer("betas_base", betas_base, persistent=False)
         alphas_cumprod_base = torch.cumprod(1.0 - self.betas_base, dim=0)
         self.register_buffer("alphas_cumprod_base", alphas_cumprod_base, persistent=False)
-        use_timesteps, _ = self.space_timesteps(self.num_base_steps)
-        self.calc_diffusion_vars(use_timesteps)
+        # Active schedule cache (see ensure_schedule). map_tensor is a (non-persistent) buffer so
+        # it follows the module across .to(device).
+        self._sched_n: Optional[int] = None
+        self._sched_src = None
+        self.register_buffer("map_tensor", torch.zeros(0, dtype=torch.long), persistent=False)
+        self.ensure_schedule(self.num_base_steps)
 
     def extra_repr(self) -> str:
         return f"num_base_steps={self.num_base_steps}"
@@ -51,17 +55,40 @@ class Diffusion(torch.nn.Module):
         """Return (use_timesteps, map_tensor) for a subsampled denoising schedule of
         num_denoising_steps."""
         nsteps_train = self.num_base_steps
+        # Plain-int arithmetic: a tensor here would force a host sync at every call.
+        num_denoising_steps = int(num_denoising_steps)
         frac_stride = (nsteps_train - 1) / max(1, num_denoising_steps - 1)
         use_timesteps = torch.round(torch.arange(nsteps_train, device=self.device) * frac_stride).to(torch.long)
         use_timesteps = torch.clamp(use_timesteps, max=nsteps_train - 1)
         map_tensor = torch.arange(nsteps_train, device=self.device, dtype=torch.long)[use_timesteps]
         return use_timesteps, map_tensor
 
+    def ensure_schedule(self, num_denoising_steps) -> torch.Tensor:
+        """Make the diffusion buffers current for ``num_denoising_steps`` and return ``map_tensor``.
+
+        ``num_denoising_steps`` may be a Python int or a (1-element) tensor. The schedule is only
+        recomputed when the step count changes; the same tensor object passed again (as the
+        denoising loop does every step) is recognised without reading it back from the device.
+        """
+        if isinstance(num_denoising_steps, torch.Tensor):
+            if num_denoising_steps is self._sched_src and self._sched_n is not None:
+                return self.map_tensor
+            n = int(num_denoising_steps.reshape(-1)[0])
+        else:
+            n = int(num_denoising_steps)
+        if n != self._sched_n or self.map_tensor.device != self.device:
+            use_timesteps, map_tensor = self.space_timesteps(n)
+            self.calc_diffusion_vars(use_timesteps)
+            self._sched_n = n
+            self.map_tensor = map_tensor  # buffer assignment
+        self._sched_src = num_denoising_steps if isinstance(num_denoising_steps, torch.Tensor) else None
+        return self.map_tensor
+
     def calc_diffusion_vars(self, use_timesteps: torch.Tensor) -> None:
         """Update buffers (betas, alphas, alphas_cumprod, etc.) for the given subsampled
         timesteps."""
         alphas_cumprod = self.alphas_cumprod_base[use_timesteps]
-        last_alpha_cumprod = torch.cat([torch.tensor([1.0]).to(alphas_cumprod), alphas_cumprod[:-1]])
+        last_alpha_cumprod = torch.cat([alphas_cumprod.new_ones(1), alphas_cumprod[:-1]])
         betas = 1.0 - alphas_cumprod / last_alpha_cumprod
         self.register_buffer("betas", betas, persistent=False)
 
@@ -71,7 +98,7 @@ class Diffusion(torch.nn.Module):
         alphas_cumprod = torch.clamp(alphas_cumprod, min=1e-9)
         self.register_buffer("alphas_cumprod", alphas_cumprod, persistent=False)
 
-        alphas_cumprod_prev = torch.cat([torch.tensor([1.0]).to(self.alphas_cumprod), self.alphas_cumprod[:-1]])
+        alphas_cumprod_prev = torch.cat([self.alphas_cumprod.new_ones(1), self.alphas_cumprod[:-1]])
         self.register_buffer("alphas_cumprod_prev", alphas_cumprod_prev, persistent=False)
 
         sqrt_recip_alphas_cumprod = torch.rsqrt(self.alphas_cumprod)

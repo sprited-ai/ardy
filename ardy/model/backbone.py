@@ -3,6 +3,7 @@
 
 import copy
 import logging
+import os
 from typing import Optional, Union
 
 import torch
@@ -14,6 +15,9 @@ from torch import Tensor, nn
 from ardy.tools import validate
 
 log = logging.getLogger(__name__)
+
+# Set ARDY_CHECK_PE_INDEX=1 to assert positional-encoding indices are in range (costs a device sync).
+_CHECK_PE_INDEX = os.environ.get("ARDY_CHECK_PE_INDEX", "0") == "1"
 
 
 def pad_x_and_mask_to_fixed_size(x: Tensor, mask: Tensor, size: int):
@@ -138,10 +142,11 @@ class SDPATransformerEncoderLayer(nn.Module):
     def _sa_block(self, x, attn_mask):
         bs, seq_len, _ = x.shape
         qkv = F.linear(x, self.self_attn.in_proj_weight, self.self_attn.in_proj_bias)
-        q, k, v = qkv.chunk(3, dim=-1)
-        q = q.view(bs, seq_len, self.nhead, self.head_dim).transpose(1, 2)
-        k = k.view(bs, seq_len, self.nhead, self.head_dim).transpose(1, 2)
-        v = v.view(bs, seq_len, self.nhead, self.head_dim).transpose(1, 2)
+        # Same split as qkv.chunk(3, -1) + per-tensor view/transpose, but materialised with ONE copy:
+        # SDPA kernels want contiguous q/k/v and (on MPS at least) copy each non-contiguous input
+        # separately, which costs three small kernel launches per layer instead of one.
+        qkv = qkv.view(bs, seq_len, 3, self.nhead, self.head_dim).permute(2, 0, 3, 1, 4).contiguous()
+        q, k, v = qkv.unbind(0)
         dropout_p = self.attn_dropout_p if self.training else 0.0
         attn = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, dropout_p=dropout_p)
         attn = attn.transpose(1, 2).reshape(bs, seq_len, self.d_model)
@@ -156,6 +161,11 @@ class SDPATransformerEncoderLayer(nn.Module):
         if is_causal:
             raise NotImplementedError("is_causal is not supported")
         attn_mask = self._build_attn_mask(src, src_key_padding_mask, src_mask)
+        return self.forward_with_attn_mask(src, attn_mask)
+
+    def forward_with_attn_mask(self, src, attn_mask):
+        """Layer forward with an already-merged additive mask (see ``_build_attn_mask``); lets the
+        encoder build the mask once instead of once per layer."""
         x = src
         if self.norm_first:
             x = x + self._sa_block(self.norm1(x), attn_mask)
@@ -180,9 +190,14 @@ class SDPATransformerEncoder(nn.Module):
         self.norm = norm
 
     def forward(self, src, mask=None, src_key_padding_mask=None, is_causal=None):
+        if is_causal:
+            raise NotImplementedError("is_causal is not supported")
+        # The merged mask only depends on the input shape/dtype/device, which every layer shares:
+        # build it once (a few small kernels) rather than in each of the layers.
+        attn_mask = self.layers[0]._build_attn_mask(src, src_key_padding_mask, mask) if len(self.layers) else None
         out = src
         for layer in self.layers:
-            out = layer(out, src_mask=mask, src_key_padding_mask=src_key_padding_mask)
+            out = layer.forward_with_attn_mask(out, attn_mask)
         if self.norm is not None:
             out = self.norm(out)
         return out
@@ -547,7 +562,10 @@ class PositionalEncodingNegativeIndex(nn.Module):
         Returns:
             torch.Tensor: [B, T, D] input motion with PE added to it (and optionally dropout)
         """
-        assert index.abs().max() < self.max_len, f"Index {index.abs().max()} is greater than max length {self.max_len}"
+        if _CHECK_PE_INDEX:
+            # Reads a scalar back from the device (a sync per forward); the clamp below keeps
+            # out-of-range indices safe regardless, so this is opt-in.
+            assert index.abs().max() < self.max_len, f"Index {index.abs().max()} is greater than max length {self.max_len}"
 
         # Convert negative indices to positive offsets into the pe buffer for tensorrt compatibility.
         # pe layout: [0..max_len-1, reversed_negative(max_len..2*max_len-2)]

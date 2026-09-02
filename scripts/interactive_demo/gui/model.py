@@ -3,6 +3,8 @@
 
 """Interactive-demo GUI: Model tab (split from create_gui)."""
 
+from ardy.tools import get_default_device
+
 from ..common import *  # noqa: F401,F403
 
 
@@ -82,10 +84,16 @@ class GuiModelMixin:
             _text_encoder_options = [
                 "cuda / bfloat16",
                 "cuda / float32",
+                "mps / float16",
+                "mps / float32",
                 "cpu / bfloat16",
                 "cpu / float32",
             ]
-            _text_encoder_initial = "cuda / bfloat16" if torch.cuda.is_available() else "cpu / bfloat16"
+            _default_device = get_default_device()
+            _text_encoder_initial = {
+                "cuda": "cuda / bfloat16",
+                "mps": "mps / float16",
+            }.get(_default_device, "cpu / bfloat16")
             g.gui_text_encoder_mode = client.gui.add_dropdown(
                 "Text Encoder",
                 options=_text_encoder_options,
@@ -107,7 +115,7 @@ class GuiModelMixin:
                         )
                     return
                 device_str, dtype_str = [s.strip() for s in g.gui_text_encoder_mode.value.split("/")]
-                dtype = torch.bfloat16 if dtype_str == "bfloat16" else torch.float32
+                dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16}.get(dtype_str, torch.float32)
                 try:
                     encoder.to(device=device_str, dtype=dtype)
                     # Drop lingering Python refs to the old tensors, then return

@@ -142,7 +142,7 @@ def length_to_mask(
     device = length.device
 
     if max_len is None:
-        max_len = max(length)
+        max_len = int(length.max())
 
     mask = torch.arange(max_len, device=device).expand(len(length), max_len) < length.unsqueeze(1)
     return mask

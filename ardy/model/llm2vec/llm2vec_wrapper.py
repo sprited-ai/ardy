@@ -3,10 +3,12 @@
 """LLM2Vec encoder wrapper for ARDY text conditioning."""
 
 import os
+from typing import Optional
 
 import numpy as np
 import torch
 
+from ...tools import get_default_device
 from .llm2vec import LLM2Vec
 
 
@@ -16,7 +18,7 @@ class LLM2VecEncoder:
     def __init__(
         self,
         base_model_name_or_path: str,
-        peft_model_name_or_path: str,
+        peft_model_name_or_path: Optional[str],
         dtype: str,
         llm_dim: int,
         device: str = "auto",
@@ -28,12 +30,13 @@ class LLM2VecEncoder:
 
         if "TEXT_ENCODERS_DIR" in os.environ:
             base_model_name_or_path = os.path.join(os.environ["TEXT_ENCODERS_DIR"], base_model_name_or_path)
-            peft_model_name_or_path = os.path.join(os.environ["TEXT_ENCODERS_DIR"], peft_model_name_or_path)
+            if peft_model_name_or_path is not None:
+                peft_model_name_or_path = os.path.join(os.environ["TEXT_ENCODERS_DIR"], peft_model_name_or_path)
 
         self.model = LLM2Vec.from_pretrained(
             base_model_name_or_path=base_model_name_or_path,
             peft_model_name_or_path=peft_model_name_or_path,
-            torch_dtype=torch_dtype,
+            dtype=torch_dtype,
             cache_dir=cache_dir,
         )
 
@@ -41,7 +44,7 @@ class LLM2VecEncoder:
         if env_device:
             device = env_device
         if device == "auto":
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            device = get_default_device()
         self._device = device
         if device is not None:
             self.model = self.model.to(device)
@@ -97,5 +100,5 @@ class LLM2VecEncoder:
             encoded_text = encoded_text[0]
             lengths = lengths[0]
 
-        encoded_text = torch.tensor(encoded_text).to(self._device)
+        encoded_text = torch.as_tensor(encoded_text).to(self._device)
         return encoded_text, lengths
