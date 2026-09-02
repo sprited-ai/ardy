@@ -1,0 +1,46 @@
+<!doctype html><html><head><meta charset="utf-8"><title>ARDY onnxruntime-web bench</title></head>
+<body style="font-family:monospace;padding:16px"><h3>ARDY denoiser / decoder in onnxruntime-web</h3><div id="log"></div>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.29.0/dist/ort.webgpu.min.js" crossorigin="anonymous"></script>
+<script>
+ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.29.0/dist/';
+const logEl = document.getElementById('log');
+const log = (s) => { logEl.innerHTML += s + '<br>'; console.log('[bench] ' + s); };
+const f = (shape, fill) => new ort.Tensor('float32', new Float32Array(shape.reduce((a, b) => a * b, 1)).fill(fill ?? 0), shape);
+const i64 = (v) => new ort.Tensor('int64', BigInt64Array.from([BigInt(v)]), [1]);
+async function bench(ep) {
+  const NT = 50, NF = 200, DIM_TOKEN = 148, LLM = 4096, MREP = 330, hist = 4, gen = NF - hist;
+  const t0 = performance.now();
+  const sess = await ort.InferenceSession.create('onnx/denoiser.onnx', { executionProviders: [ep], graphOptimizationLevel: 'all' });
+  log(`${ep}: denoiser session created in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+  const histMask = new Float32Array(NF).fill(0); histMask.fill(1, 0, hist);
+  const genMask = new Float32Array(NF).fill(0); genMask.fill(1, hist);
+  const histTok = new Float32Array(NT).fill(0); histTok[0] = 1;
+  const genTok = new Float32Array(NT).fill(0); genTok.fill(1, 1);
+  const x = f([1, NT, DIM_TOKEN]); for (let i = 0; i < x.data.length; i++) x.data[i] = Math.random() * 2 - 1;
+  const feeds = {
+    cfg_weight_text: f([1], 3.5), cfg_weight_cstr: f([1], 1.5), x,
+    history_len: i64(hist), generation_len: i64(gen), future_len: i64(0),
+    history_mask: new ort.Tensor('float32', histMask, [1, NF]), generation_mask: new ort.Tensor('float32', genMask, [1, NF]), future_mask: f([1, NF]),
+    history_token_mask: new ort.Tensor('float32', histTok, [1, NT]), generation_token_mask: new ort.Tensor('float32', genTok, [1, NT]), future_token_mask: f([1, NT]),
+    text_feat: f([1, 1, LLM], 0.01), text_feat_pad_mask: f([1, 1], 1), timesteps: i64(0), first_heading_angle: f([1]),
+    motion_mask: f([1, NF, MREP]), observed_motion: f([1, NF, MREP]),
+  };
+  const names = new Set(sess.inputNames); for (const k of Object.keys(feeds)) if (!names.has(k)) delete feeds[k];
+  const w0 = performance.now(); const out0 = await sess.run(feeds); log(`${ep}: warmup step ${(performance.now() - w0).toFixed(0)} ms, output ${JSON.stringify(out0.output.dims)}, finite=${Number.isFinite(out0.output.data[0])}`);
+  const STEPS = 10, t1 = performance.now();
+  for (let s = 0; s < STEPS; s++) { feeds.timesteps = i64(s); await sess.run(feeds); }
+  const per = (performance.now() - t1) / STEPS;
+  log(`${ep}: denoiser ${per.toFixed(0)} ms/step @${NT} tokens -> ${(per * 10 / 1000).toFixed(2)} s per 10-step window (2 s of motion)`);
+  const d0 = performance.now();
+  const dec = await ort.InferenceSession.create('onnx/decoder.onnx', { executionProviders: [ep] });
+  const dfeeds = { latent_tokens: f([1, NT, 128]), external_cond: f([1, NF, 4]), motion_pad_mask: f([1, NF], 1) };
+  await dec.run(dfeeds); const d1 = performance.now(); await dec.run(dfeeds);
+  log(`${ep}: decoder session ${((d1 - d0) / 1000).toFixed(1)} s, run ${(performance.now() - d1).toFixed(0)} ms`);
+  await sess.release(); await dec.release();
+}
+(async () => {
+  log(`ort-web ${ort.env.versions?.web ?? ''}; WebGPU available: ${!!navigator.gpu}; hardwareConcurrency=${navigator.hardwareConcurrency}; crossOriginIsolated=${crossOriginIsolated}`);
+  for (const ep of ['webgpu', 'wasm']) { try { await bench(ep); } catch (e) { log(`${ep}: FAILED ${e && e.message ? e.message : e}`); console.error(e); } }
+  log('DONE');
+})();
+</script></body></html>
