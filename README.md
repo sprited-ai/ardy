@@ -149,6 +149,11 @@ python scripts/run_demo.py --no-compile                      # interactive demo 
   `~/.cache/ardy/text_embeddings/<encoder>/` (`ARDY_TEXT_EMBEDDING_CACHE_DIR`), one folder per encoder preset, so
   a prompt seen before never needs the encoder at all.
 - **Encoder fidelity:** int4 embeddings have cosine similarity ~0.98 to the int8 (near-lossless) ones.
+- **Debug panel / progress:** the demo's *Debug* folder (bottom of the panel) shows process RSS and accelerator memory
+  (current, held by the driver, peak) plus the text encoder's state (idle time, seconds until unload, last load/encode
+  times). Encoding a prompt shows a toast that follows the encoder (reload after idle, encoding, done) and a bar under the
+  Prompt field. *Now playing* reports the prompt in effect for the frame being played, switching when playback reaches
+  the frame a new prompt starts at.
   `TEXT_ENCODER=llm2vec-int8` is a drop-in higher-fidelity option when ~9 GB of MPS memory is free.
 
 </details>
