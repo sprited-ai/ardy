@@ -39,7 +39,7 @@ if (!session) { status('No backend available (WebGPU or WASM).'); throw new Erro
 $('progress').hidden = true;
 
 // ---------------------------------------------------------------- generation state
-const state = { history: Float32Array.from(cfg.init_history.flat()), queue: [], generating: false, producing: false, playing: false, frame: 0, windowMs: 0, windows: 0 };
+const state = { history: Float32Array.from(cfg.init_history.flat()), queue: [], generating: false, producing: false, playing: false, frame: 0, windowMs: 0, windows: 0, nowPlaying: -1 };
 function randn(n) { const a = new Float32Array(n); for (let i = 0; i < n; i += 2) { const u = 1 - Math.random(), v = Math.random(), r = Math.sqrt(-2 * Math.log(u)); a[i] = r * Math.cos(2 * Math.PI * v); if (i + 1 < n) a[i + 1] = r * Math.sin(2 * Math.PI * v); } return a; }
 async function generateWindow() {
   if (state.generating) return; state.generating = true;
@@ -56,7 +56,7 @@ async function generateWindow() {
     const out = await session.run(feeds);
     state.windowMs = performance.now() - t0; state.windows++;
     const motion = out.motion.data, joints = out.joints.data;
-    for (let f = H; f < T; f++) state.queue.push(joints.slice(f * J * 3, (f + 1) * J * 3));   // new frames only
+    for (let f = H; f < T; f++) state.queue.push({ j: joints.slice(f * J * 3, (f + 1) * J * 3), p: pi });   // new frames only, tagged with their prompt
     state.history = Float32Array.from(motion.subarray((T - H) * MOTION_DIM, T * MOTION_DIM));  // last H frames (world space)
   } catch (e) { status('Generation failed: ' + (e.message || e)); console.error(e); state.playing = false; }
   state.generating = false;
@@ -101,7 +101,8 @@ function tick(now) {
   acc += now - last; last = now;
   const dt = 1000 / FPS;
   if (acc > 4 * dt) acc = 4 * dt;  // after a stall, skip ahead at most a few frames instead of draining the buffer
-  while (acc >= dt) { acc -= dt; if (state.playing && state.queue.length) { drawFrame(state.queue.shift()); shown++; } }
+  while (acc >= dt) { acc -= dt; if (state.playing && state.queue.length) { const fr = state.queue.shift(); drawFrame(fr.j); shown++;
+    if (fr.p !== state.nowPlaying) { state.nowPlaying = fr.p; $('now').textContent = promptsMeta.prompts[fr.p]; $('now').classList.add('flash'); setTimeout(() => $('now').classList.remove('flash'), 1200); } } }
   fpsN++; if (now - fpsT > 500) { fps = fpsN * 1000 / (now - fpsT); fpsN = 0; fpsT = now; }
   controls.update(); renderer.render(scene, camera);
 }
