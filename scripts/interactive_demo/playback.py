@@ -67,6 +67,7 @@ class PlaybackMixin:
         client = session.client
 
         session.frame_idx = frame_idx
+        self.update_now_playing(client_id, frame_idx)
         # Update the Viser timeline GUI if not triggered by it
         if not trigger_by_gui_timeline and hasattr(client, "timeline"):
             try:

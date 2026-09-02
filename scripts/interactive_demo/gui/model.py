@@ -263,8 +263,7 @@ class GuiModelMixin:
                     if event.client:
                         if success:
                             session = self.client_sessions[client_id]
-                            text_feat, _ = session.model.text_encoder([g.gui_prompt_text.value])
-                            session.text_embedding = text_feat.to(self.device)
+                            session.text_embedding = self.encode_prompt(client_id, g.gui_prompt_text.value, notify=False)
                             session.gui_elements.gui_active_prompt_label.content = (
                                 f"**Active Prompt:** {g.gui_prompt_text.value}"
                             )

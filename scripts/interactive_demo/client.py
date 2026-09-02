@@ -121,8 +121,7 @@ class ClientMixin:
             if session.model is not None:
                 report_progress("Generating initial motion...")
                 seed_everything(gui_elements.gui_seed.value)
-                text_feat, _ = session.model.text_encoder([gui_elements.gui_prompt_text.value])
-                session.text_embedding = text_feat.to(self.device)
+                session.text_embedding = self.encode_prompt(client.client_id, gui_elements.gui_prompt_text.value, notify=False)
                 # Generate initial motion
                 self.restart(client.client_id)
                 loading_notif.title = "Model loaded"

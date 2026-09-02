@@ -114,6 +114,7 @@ class GuiMixin:
 
         # Active prompt label
         g.gui_active_prompt_label = client.gui.add_markdown("**Active Prompt:** A person is walking.")
+        g.gui_now_playing = client.gui.add_markdown("**Now playing:** \u2013")
 
         tab_group = client.gui.add_tab_group()
 
@@ -133,6 +134,7 @@ class GuiMixin:
         with tab_group.add_tab("Instructions", viser.Icon.INFO_CIRCLE):
             client.gui.add_markdown(INSTRUCTIONS_TAB_MD)
 
+        self._build_status_gui(client, g)
         gui_elements = GuiElements(**{f: getattr(g, f) for f in GuiElements.__dataclass_fields__})
         return gui_elements, timeline_tracks, timeline_data
 
@@ -148,14 +150,14 @@ class GuiMixin:
             return
 
         text_prompt = session.gui_elements.gui_prompt_text.value
-        text_feat, _ = session.model.text_encoder([text_prompt])
-        session.text_embedding = text_feat.to(self.device)
+        session.text_embedding = self.encode_prompt(client_id, text_prompt)
 
         session.gui_elements.gui_active_prompt_label.content = f"**Active Prompt:** {text_prompt}"
 
         # Update timeline prompts
         current_frame = max(0, session.frame_idx)
         next_frame = current_frame + 1
+        self.note_prompt_start(session, 0 if initial_prompt else next_frame, text_prompt)
 
         if session.timeline_data is not None and hasattr(client, "timeline"):
             prompt_uuid_list = session.timeline_data.get("prompt_uuid_list", [])

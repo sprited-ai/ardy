@@ -19,6 +19,8 @@ class GuiTextMixin:
                     prompt_buttons.append(btn)
 
             g.gui_prompt_text = client.gui.add_text("Prompt", default_prompt)
+            # shown while the prompt is being encoded (the encoder may need to reload after idling)
+            g.gui_text_encoder_progress = client.gui.add_progress_bar(100, animated=True, visible=False)
             g.gui_update_text_button = client.gui.add_button("Update Text Prompt", color="green")
 
             # Prompt button handlers

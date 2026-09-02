@@ -126,8 +126,45 @@ class IdleUnloadingTextEncoder:
         self._device: Optional[object] = None
         self._dtype: Optional[torch.dtype] = None
         self._unloadable = True
+        self._listeners = []
+        self._last_load_s: Optional[float] = None
+        self._last_encode_s: Optional[float] = None
         if preload:
             self._ensure_loaded()
+
+    # -------------------------------------------------------------- observers
+    def add_listener(self, fn) -> None:
+        """``fn(event, info)`` for events load_start, load_end, unload, encode_start, encode_end.
+        Called synchronously on the thread doing the work (so a UI listener can annotate that call)."""
+        with self._lock:
+            self._listeners.append(fn)
+
+    def remove_listener(self, fn) -> None:
+        with self._lock:
+            if fn in self._listeners:
+                self._listeners.remove(fn)
+
+    def _emit(self, event: str, **info) -> None:
+        with self._lock:
+            listeners = list(self._listeners)
+        for fn in listeners:
+            try:
+                fn(event, info)
+            except Exception as e:  # a broken UI hook must never break encoding
+                print(f"[{self._name}] listener error on {event}: {e!r}")
+
+    def status(self) -> dict:
+        with self._lock:
+            loaded = self._encoder is not None
+            idle = time.monotonic() - self._last_used
+            unload_in = None
+            if loaded and self._unloadable and self.idle_timeout > 0:
+                unload_in = max(0.0, self.idle_timeout - idle)
+            return {
+                "loaded": loaded, "device": str(self.device), "dtype": str(self.dtype), "unloadable": self._unloadable,
+                "idle_timeout": self.idle_timeout, "idle_seconds": idle, "unload_in": unload_in,
+                "last_load_s": self._last_load_s, "last_encode_s": self._last_encode_s, "inflight": self._inflight,
+            }
 
     # ------------------------------------------------------------------ state
     @property
@@ -157,6 +194,7 @@ class IdleUnloadingTextEncoder:
     def _ensure_loaded(self):
         with self._lock:
             if self._encoder is None:
+                self._emit("load_start")
                 started = time.monotonic()
                 encoder = self._factory()
                 if (self._device is not None or self._dtype is not None) and hasattr(encoder, "to"):
@@ -164,7 +202,9 @@ class IdleUnloadingTextEncoder:
                 self._encoder = encoder
                 self._unloadable = _is_local_encoder(encoder)
                 note = "" if self._unloadable else " (remote service; idle unload disabled)"
-                print(f"[{self._name}] loaded on {_device_of(encoder)} in {time.monotonic() - started:.1f} s{note}")
+                self._last_load_s = time.monotonic() - started
+                print(f"[{self._name}] loaded on {_device_of(encoder)} in {self._last_load_s:.1f} s{note}")
+                self._emit("load_end", seconds=self._last_load_s, device=_device_of(encoder))
             self._touch()
             return self._encoder
 
@@ -214,18 +254,23 @@ class IdleUnloadingTextEncoder:
             after = accelerator_memory_bytes()
         freed = f"; {_accelerator()} memory {before / 1e9:.1f} -> {after / 1e9:.1f} GB" if before else ""
         print(f"[{self._name}] unloaded ({reason}){freed}; it is rebuilt on the next new prompt")
+        self._emit("unload", reason=reason, before=before, after=after)
 
     # ------------------------------------------------------------ encoder API
     def __call__(self, texts):
         with self._lock:
             encoder = self._ensure_loaded()
             self._inflight += 1
+        self._emit("encode_start", count=len(texts) if hasattr(texts, "__len__") else 1)
+        started = time.monotonic()
         try:
             return encoder(texts)
         finally:
             with self._lock:
                 self._inflight -= 1
+                self._last_encode_s = time.monotonic() - started
                 self._touch()
+            self._emit("encode_end", seconds=self._last_encode_s)
 
     def to(self, device=None, dtype=None):
         with self._lock:

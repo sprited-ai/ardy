@@ -19,6 +19,8 @@ class GenerationMixin:
         self.clear_motions(client_id)
         session.max_frame_idx = -1
         session.frame_idx = 0
+        session.prompt_schedule = [(0, session.gui_elements.gui_prompt_text.value)]
+        session.now_playing_text = None
 
         # Reset camera state for smooth transitions
         session.camera_position = None

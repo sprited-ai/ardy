@@ -32,11 +32,13 @@ from interactive_demo.loading import ModelLoadingMixin
 from interactive_demo.motion_io import MotionIOMixin
 from interactive_demo.playback import PlaybackMixin
 from interactive_demo.session_io import SessionIOMixin
+from interactive_demo.status import StatusMixin
 
 from ardy.tools import get_default_device
 
 
 class InteractiveTimelineDemo(
+    StatusMixin,
     ModelLoadingMixin,
     MotionIOMixin,
     ClientMixin,
@@ -69,6 +71,7 @@ class InteractiveTimelineDemo(
         # need the encoder at all.
         lazy_encoder = IdleUnloadingTextEncoder(self._build_text_encoder, idle_timeout=text_encoder_idle_timeout)
         self.text_encoder = CachedTextEncoder(lazy_encoder, namespace=text_encoder_cache_namespace(lazy_encoder))
+        self.init_status()  # Debug panel sampler + encoder event hooks
 
         # Prewarm the cache for the default prompt and Prompt List presets
         # on a background thread; the server must not wait on this.

@@ -272,6 +272,10 @@ class GuiElements:
     gui_enable_postprocess_checkbox: viser.GuiInputHandle[bool]
     gui_postprocess_root_margin: viser.GuiInputHandle[float]
     gui_postprocess_contact_threshold: viser.GuiInputHandle[float]
+    gui_now_playing: viser.GuiMarkdownHandle
+    gui_text_encoder_progress: object  # viser progress bar handle (not exported at top level)
+    gui_debug_memory: viser.GuiInputHandle[str]
+    gui_debug_encoder: viser.GuiInputHandle[str]
 
 
 @dataclass
@@ -340,6 +344,9 @@ class ClientSession:
 
     # Playback thread control
     playback_thread: Optional[threading.Thread] = None
+    # (start_frame, prompt) pairs; playback reports the one in effect at the current frame ("Now playing")
+    prompt_schedule: list = field(default_factory=list)
+    now_playing_text: Optional[str] = None
     stop_playback: bool = False
 
     # Hand orientation gizmos (dict of character_name -> dict of joint_name -> gizmo)
