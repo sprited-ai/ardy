@@ -165,5 +165,5 @@ train_done
 .aider*
 onelogger.err
 
-# browser prototype: exported models are large, regenerate with web/export_web_onnx.py
-web/onnx/
+# browser demo: the exported ONNX graphs are large, regenerate with web/export_web_onnx.py
+web/models/*.onnx

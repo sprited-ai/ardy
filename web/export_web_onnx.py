@@ -1,30 +1,79 @@
-"""Export ARDY denoiser + decoder to ONNX on CPU and verify with onnxruntime (web-feasibility probe)."""
-import os, sys, time, collections, numpy as np, torch, onnx, onnxruntime as ort
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
-from export_onnx import export_denoiser_onnx, export_decoder_onnx, make_denoiser_dummy_inputs, make_decoder_dummy_inputs
-from ardy.model.load_model import load_model
-out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "onnx"); os.makedirs(out, exist_ok=True)
+"""Export one ARDY window (text-only autoregressive step) as a single ONNX graph for the browser.
+
+Usage: python web/export_web_onnx.py [out_dir] [model_name]
+Writes <out_dir>/window.onnx plus the small JSON side files the web app needs.
+"""
+
+import hashlib
+import json
+import os
+import sys
+import time
+
+import numpy as np
+import onnx
+import onnxruntime as ort
+import torch
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(REPO, "scripts"))
+from ardy.exports.web import WebWindow, draw_noise, export_web_window, reference_window  # noqa: E402
+from ardy.model.load_model import load_model  # noqa: E402
+from interactive_demo.embedding_cache import DEFAULT_CACHE_DIR, text_encoder_cache_namespace  # noqa: E402
+
+out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
 name = sys.argv[2] if len(sys.argv) > 2 else "Ardy-Core-RP-20FPS-Horizon40"
-model, cfg = load_model(name, device="cpu", text_encoder=False, return_config=True)
-fps, patch = model.motion_rep.fps, model.denoiser.num_frames_per_token
-max_tok = ((10 * fps // patch) * patch) // patch   # same window budget as the demo (10 s)
-print(f"model {name}: fps={fps} frames/token={patch} max_tokens={max_tok} horizon={model.gen_horizon_len}")
-den_path, dec_path = f"{out}/denoiser.onnx", f"{out}/decoder.onnx"
-t0 = time.time(); export_denoiser_onnx(model.denoiser, cfg, den_path, num_tokens=max_tok); print(f"denoiser exported in {time.time()-t0:.0f}s")
-t0 = time.time(); export_decoder_onnx(model.autoencoder, dec_path, num_tokens=max_tok); print(f"decoder exported in {time.time()-t0:.0f}s")
-for p in (den_path, dec_path):
-    m = onnx.load(p); onnx.checker.check_model(m)
-    ops = collections.Counter(n.op_type for n in m.graph.node)
-    ext = sum(os.path.getsize(f"{out}/{f}") for f in os.listdir(out) if f.startswith(os.path.basename(p)) and f != os.path.basename(p))
-    print(f"\n{os.path.basename(p)}: {os.path.getsize(p)/1e6:.0f} MB (+{ext/1e6:.0f} MB external), opset {m.opset_import[0].version}, {len(m.graph.node)} nodes")
-    print("  ops:", ", ".join(f"{k}:{v}" for k, v in ops.most_common()))
-    print("  inputs:", ", ".join(f"{i.name}[{','.join(str(d.dim_value or d.dim_param) for d in i.type.tensor_type.shape.dim)}]" for i in m.graph.input))
-# numerical check vs torch, at a smaller token count than the export (exercises the dynamic axes)
+os.makedirs(out, exist_ok=True)
+
+
+def cached_embedding(text: str) -> torch.Tensor:
+    """Prompt embedding from the demo's on-disk cache (encoded once by the int4 LLM2Vec encoder)."""
+    ns = os.environ.get("TEXT_ENCODER", "llm2vec-int4")
+    path = os.path.join(DEFAULT_CACHE_DIR, ns, hashlib.sha256(text.encode("utf-8")).hexdigest() + ".npy")
+    return torch.from_numpy(np.load(path)).float()[None]  # [1, 1, 4096]
+
+
+model = load_model(name, device="cpu", text_encoder=False)
+window = WebWindow(model, history_frames=4, num_denoising_steps=10).eval()
+llm_dim = 4096
+text = cached_embedding("A person is walking.")
+print(f"{name}: history {window.history_frames} + gen {window.gen_frames} frames, {window.num_denoising_steps} steps, token dim {window.token_dim}")
+
+# --- bootstrap history: generate a first window from nothing, keep its last 4 frames -------------------
 torch.manual_seed(0)
-d_in = make_denoiser_dummy_inputs(model.denoiser, num_tokens=12, num_text_tokens=1, device="cpu")
-with torch.no_grad(): ref = model.denoiser(**d_in)
-sess = ort.InferenceSession(den_path, providers=["CPUExecutionProvider"])
-feed = {k: v.numpy() for k, v in d_in.items() if k in {i.name for i in sess.get_inputs()}}
-t0 = time.time(); got = sess.run(None, feed)[0]; dt = time.time() - t0
-print(f"\ndenoiser ORT-CPU vs torch: max|d|={np.abs(got - ref.numpy()).max():.2e} (|ref| mean {np.abs(ref.numpy()).mean():.3f}), 1 step @12 tokens {dt*1000:.0f} ms (M1 CPU, fp32)")
-print("decoder: verified separately at the export token count (see web/README.md)")
+with torch.no_grad():
+    boot = model.autoregressive_step(
+        num_frames=model.gen_horizon_len, num_denoising_steps=10, motion_mask=None, observed_motion=None,
+        cfg_weight=(3.5, 1.5), text_feat=text, text_pad_mask=torch.ones(1, 1, dtype=torch.bool),
+        init_history_sequence=None, init_global_translation=torch.zeros(1, 3), init_first_heading_angle=torch.zeros(1),
+    )
+history = boot[:, -window.history_frames :].contiguous()
+
+# --- WebWindow vs the original code path, same noise ------------------------------------------------
+with torch.no_grad():
+    ref = reference_window(model, history, text, seed=1, cfg_weight=(3.5, 1.5))
+    noise = draw_noise(window, seed=1, device="cpu")
+    motion, joints, rots = window(history, text, noise, torch.tensor([3.5]), torch.tensor([1.5]))
+print(f"WebWindow vs autoregressive_step: max|d motion|={(motion - ref).abs().max():.2e}  (|ref| mean {ref.abs().mean():.3f}); joints {tuple(joints.shape)}")
+
+# --- export + onnxruntime check --------------------------------------------------------------------
+path = os.path.join(out, "window.onnx")
+t0 = time.time(); export_web_window(window, path, llm_dim); print(f"exported {path} in {time.time() - t0:.0f} s: {os.path.getsize(path) / 1e6:.0f} MB")
+m = onnx.load(path); onnx.checker.check_model(m)
+ops = {}
+for n in m.graph.node: ops[n.op_type] = ops.get(n.op_type, 0) + 1
+print(f"  {len(m.graph.node)} nodes; ops: " + ", ".join(f"{k}:{v}" for k, v in sorted(ops.items(), key=lambda kv: -kv[1])))
+sess = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
+feed = {"history": history.numpy(), "text_feat": text.numpy(), "noise": noise.numpy(), "cfg_weight_text": np.array([3.5], np.float32), "cfg_weight_cstr": np.array([1.5], np.float32)}
+t0 = time.time(); o_motion, o_joints, o_rots = sess.run(None, feed); dt = time.time() - t0
+print(f"onnxruntime CPU vs torch: max|d motion|={np.abs(o_motion - motion.numpy()).max():.2e}, max|d joints|={np.abs(o_joints - joints.numpy()).max():.2e} m; one window {dt * 1000:.0f} ms")
+
+# --- side files for the web app ----------------------------------------------------------------------
+skel = model.motion_rep.skeleton
+names = list(skel.bone_order_names)
+parents = [names.index(p) if p is not None else -1 for _, p in skel.bone_order_names_with_parents]
+json.dump({"name": skel.name, "joint_names": names, "parents": parents}, open(os.path.join(out, "skeleton.json"), "w"))
+json.dump({"history_frames": window.history_frames, "gen_frames": window.gen_frames, "fps": model.motion_rep.fps,
+           "num_denoising_steps": window.num_denoising_steps, "token_dim": window.token_dim, "motion_dim": model.motion_rep.motion_rep_dim,
+           "llm_dim": llm_dim, "model": name, "init_history": history[0].tolist()}, open(os.path.join(out, "window.json"), "w"))
+print("wrote skeleton.json, window.json (with init_history)")

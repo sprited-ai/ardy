@@ -1,0 +1,26 @@
+{
+"llm_dim": 4096,
+"dtype": "float32",
+"prompts": [
+"A person is walking.",
+"A person is running.",
+"A person is jogging in a circle.",
+"A person is walking backwards slowly.",
+"A person is standing still.",
+"A person is dancing happily.",
+"A person is jumping up and down.",
+"A person is boxing, throwing punches.",
+"A person is crouching and sneaking forward.",
+"A person is waving with both hands.",
+"A person is kicking with the right leg.",
+"A person is turning around and walking away.",
+"A person is marching.",
+"A person is stretching the arms.",
+"A person is walking like a zombie.",
+"A person is skipping forward.",
+"A person walks in a circle.",
+"A person is doing jumping jacks.",
+"A person is bowing politely.",
+"A person is walking and looking around."
+]
+}

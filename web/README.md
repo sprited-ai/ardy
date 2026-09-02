@@ -1,39 +1,46 @@
-# ARDY in the browser (prototype)
+# ARDY in the browser (WebGPU)
 
-Feasibility probe for running ARDY's denoiser + decoder with onnxruntime-web (WebGPU), the same stack as the
-[GEAR-SONIC live web demo](https://nvlabs.github.io/GEAR-SONIC/demo.html) (`ort.min.js` WebGPU/WASM + three.js +
-`coi-serviceworker`).
+Text-to-motion running entirely client-side: one ONNX graph per autoregressive window executed by
+[onnxruntime-web](https://onnxruntime.ai/docs/tutorials/web/) on WebGPU, a precomputed prompt-embedding library
+instead of the 8B-parameter text encoder, and a three.js stick-figure player. Same stack as the
+[GEAR-SONIC live demo](https://nvlabs.github.io/GEAR-SONIC/demo.html).
 
 ```bash
-python web/export_web_onnx.py            # -> web/onnx/denoiser.onnx (685 MB fp32), decoder.onnx (82 MB)
-python web/serve.py 8765                 # static server with COOP/COEP headers (needed for WASM threads)
-open http://127.0.0.1:8765/bench.html    # runs 10 denoiser steps + decoder on webgpu, then wasm
+python web/export_web_onnx.py    # -> web/models/window.onnx (+ window.json, skeleton.json); needs the model on CPU
+python web/build_prompts.py      # -> web/models/prompts.{json,bin}; needs the local LLM2Vec encoder (int4 on MPS)
+python web/serve.py 8765         # static server with the COOP/COEP headers onnxruntime-web wants
+open http://127.0.0.1:8765/      # pick a prompt, press Start
 ```
 
-The export reuses `scripts/export_onnx.py` (the TensorRT path) on CPU, at the demo's 10 s window budget
-(50 tokens x 4 frames for the 20 fps Core model). The token count is baked into a reshape inside the decoder
-graph, so both graphs run at exactly the exported size and callers pad shorter windows with the masks, as the
-TensorRT path already does.
+## How it works
 
-## Measured (M1 Pro 16 GB, Chrome 152, fp32, 50-token window)
+- `ardy/exports/web.py` — `WebWindow` re-implements `Ardy.autoregressive_step` for the text-only case with every
+  shape fixed (4 history frames, 40 generated frames, 10 denoising steps): history tokenization (autoencoder encoder),
+  recentering, the unrolled CFG denoising loop with the DDIM sampler, root translation back to world space, decoding,
+  and the motion-representation inverse (forward kinematics). Inputs: `history [1,4,330]`, `text_feat [1,1,4096]`,
+  `noise [1,10,148]`, two guidance weights. Outputs: normalized motion features `[1,44,330]`, joint positions
+  `[1,44,27,3]`, joint rotations. It matches `autoregressive_step` bit-for-bit given the same noise.
+- `web/app.js` — keeps the last 4 output frames as the next window's history, buffers ~2 windows ahead on an async
+  producer loop, plays at the model's 20 fps with requestAnimationFrame, prompt changes take effect at the next window.
+- `web/build_prompts.py` — encodes a prompt list once with the local encoder (the demo's embedding cache is reused).
+  Free-text prompts would need a text-encoder server (`scripts/run_text_encoder_server.py`).
 
-| backend | denoiser / step | 10-step window (= 2 s of motion) | decoder |
-|---|---|---|---|
-| WebGPU | 106 ms | 1.06 s (~1.9x real time) | 35 ms |
-| WASM (SIMD + threads) | 357 ms | 3.57 s (0.56x, not real time) | - |
-| reference: onnxruntime CPU, native | 43 ms @12 tokens | | 8 ms |
-| reference: PyTorch MPS, native | | 0.29 s | |
+## Measured (M1 Pro 16 GB, Chrome 152, fp32 graph, 813 MB)
 
-ONNX vs PyTorch outputs agree to 2e-4 (denoiser) / 1e-3 (decoder). Ops used are all standard opset-17 ops
-(MatMul, LayerNormalization, Softmax, Erf, Gather/Scatter, Where, Trilu ...).
+| | |
+|---|---|
+| WebGPU session creation | 5–12 s |
+| one window (10 denoising steps + decode + FK, 40 frames = 2 s of motion) | 270–300 ms after warmup, ~0.9 s first window → 7x real time |
+| WASM fallback | ~3.6 s per window, not real time |
+| onnxruntime vs PyTorch | motion 3e-4, joints 1e-5 m |
+| window-to-window seams | joint jumps 0.04–0.21 m, inside the normal per-frame range (median 0.13 m) |
 
-## What a full web version still needs
+## Known gaps / next
 
-- **Text encoder**: Llama-3-8B LLM2Vec cannot run in the browser. Either a small server (`scripts/run_text_encoder_server.py`)
-  or precomputed embeddings for a prompt library (4096 x fp16 = 8 KB per prompt).
-- **JS port of the loop**: DDIM sampler (21 lines), diffusion schedule (109), `denoising_step` (94), motion representation
-  inverse to joint positions (~380) and skeleton FK; or export those as small ONNX graphs too and keep JS thin.
-- **Viewer**: three.js skeleton/mesh playback (the SONIC demo page is a template).
-- **Size/speed**: fp16 weights halve the 767 MB download; exporting at a smaller fixed window (e.g. 16 tokens) should
-  cut the per-step cost roughly 3x on WebGPU.
-- Post-processing (`motion_correction` C++ extension) is not available in the browser; skip or port.
+- **Size**: 813 MB fp32. `onnxconverter-common`'s fp16 pass produces a graph onnxruntime rejects (mismatched Cast
+  types inside attention); weight-only 8-bit `MatMulNBits` (supported by the WebGPU EP) is the better route (~200 MB).
+- Token count is baked into the decoder reshape at export, so the graph is fixed at 4 + 40 frames; a different history
+  length or horizon needs a re-export.
+- No kinematic constraints / waypoints, no `motion_correction` post-processing (C++ extension) in the browser.
+- Hosting: the model must be served from a CORS-enabled origin (e.g. a Hugging Face repo); redistribution of converted
+  ARDY weights is subject to the NVIDIA Open Model License.

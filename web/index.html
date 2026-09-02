@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ARDY in the browser</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #101318; color: #e6e6e6; font: 14px/1.4 system-ui, sans-serif; }
+  #view { position: absolute; inset: 0; }
+  #panel { position: absolute; top: 12px; left: 12px; width: 340px; padding: 14px 16px; background: rgba(16,19,24,.88); border: 1px solid #2a2f3a; border-radius: 10px; backdrop-filter: blur(6px); }
+  #panel h1 { font-size: 16px; margin: 0 0 8px; }
+  #panel label { display: block; margin: 10px 0 4px; color: #aab; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  select, input[type=range], button { width: 100%; box-sizing: border-box; }
+  select { padding: 6px; background: #161a22; color: #eee; border: 1px solid #333a48; border-radius: 6px; }
+  button { padding: 8px; margin-top: 10px; background: #2f6fed; color: white; border: 0; border-radius: 6px; cursor: pointer; font-weight: 600; }
+  button:disabled { background: #3a3f4c; cursor: default; }
+  #stats { margin-top: 10px; font: 12px/1.5 ui-monospace, monospace; color: #9fb; white-space: pre; }
+  #status { margin-top: 8px; font-size: 12px; color: #ccd; min-height: 1.4em; }
+  progress { width: 100%; height: 8px; }
+</style>
+</head>
+<body>
+<div id="view"></div>
+<div id="panel">
+  <h1>ARDY · text-to-motion, in your browser</h1>
+  <div id="status">Loading…</div>
+  <progress id="progress" max="100" value="0"></progress>
+  <label for="prompt">Prompt</label>
+  <select id="prompt"></select>
+  <label for="cfg">Text guidance <span id="cfgv">3.5</span></label>
+  <input id="cfg" type="range" min="1" max="7" step="0.5" value="3.5">
+  <button id="toggle" disabled>Start</button>
+  <button id="reset" disabled style="background:#3a3f4c">Reset pose</button>
+  <div id="stats"></div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.29.0/dist/ort.webgpu.min.js" crossorigin="anonymous"></script>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+               "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/" } }
+</script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
