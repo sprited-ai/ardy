@@ -147,16 +147,44 @@ class StatusMixin:
         """Record that ``text`` drives the motion from ``start_frame`` on (playback reports it when it gets there)."""
         session.prompt_schedule = [(f, t) for f, t in session.prompt_schedule if f < start_frame] + [(start_frame, text)]
 
+    def note_compute(self, session, start_frame: int, backend, seconds: float) -> None:
+        """Record which backend produced the frames from ``start_frame`` on, for the *Compute* label."""
+        browser = getattr(self, "browser_backend", None)
+        if browser is not None and backend is browser:
+            stats = self.browser_server.stats
+            label = (f"browser {self.browser_server.worker_backend() or 'worker'} · {stats['last_ms']} ms in the browser, "
+                     f"{seconds * 1000:.0f} ms round trip")
+            kind = "browser"
+        else:
+            label = f"server PyTorch ({self.device}) · {seconds * 1000:.0f} ms"
+            kind = "server"
+        session.compute_schedule = [e for e in session.compute_schedule if e[0] < start_frame] + [(start_frame, kind, label)]
+
     def update_now_playing(self, client_id: int, frame_idx: int) -> None:
         session = self.client_sessions[client_id]
+        g = session.gui_elements
         text = None
         for start, t in session.prompt_schedule:
             if frame_idx >= start:
                 text = t
-        if text is None or text == session.now_playing_text:
-            return
-        session.now_playing_text = text
-        g = session.gui_elements
-        if getattr(g, "gui_now_playing", None) is not None:
-            g.gui_now_playing.content = f"**Now playing:** {text}"
-        session.client.add_notification(title="Now playing", body=f"{text} (from frame {frame_idx})", auto_close_seconds=3.0, color="teal")
+        if text is not None and text != session.now_playing_text:
+            session.now_playing_text = text
+            if getattr(g, "gui_now_playing", None) is not None:
+                g.gui_now_playing.content = f"**Now playing:** {text}"
+            session.client.add_notification(title="Now playing", body=f"{text} (from frame {frame_idx})", auto_close_seconds=3.0, color="teal")
+        # which backend computed the frame being shown
+        entry = None
+        for start, kind, label in session.compute_schedule:
+            if frame_idx >= start:
+                entry = (kind, label)
+        if entry is not None and entry[1] != session.now_compute_text:
+            prev_kind = session.now_compute_text.split(" ")[0] if session.now_compute_text else None
+            session.now_compute_text = entry[1]
+            if getattr(g, "gui_compute_label", None) is not None:
+                g.gui_compute_label.content = f"**Compute:** {entry[1]}"
+            if entry[0] != prev_kind:  # toast only when the backend itself changes, not every window
+                session.client.add_notification(
+                    title="Frames now computed in the browser" if entry[0] == "browser" else "Frames now computed on the server",
+                    body=f"{entry[1]} (from frame {frame_idx})", auto_close_seconds=3.0,
+                    color="violet" if entry[0] == "browser" else "gray",
+                )

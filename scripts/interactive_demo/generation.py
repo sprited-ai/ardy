@@ -21,6 +21,8 @@ class GenerationMixin:
         session.frame_idx = 0
         session.prompt_schedule = [(0, session.gui_elements.gui_prompt_text.value)]
         session.now_playing_text = None
+        session.compute_schedule = []
+        session.now_compute_text = None
 
         # Reset camera state for smooth transitions
         session.camera_position = None
@@ -266,6 +268,7 @@ class GenerationMixin:
             session, num_frames=num_frames, num_denoising_steps=session.gui_elements.gui_diffusion_steps_slider.value,
             motion_mask=motion_mask, init_history_sequence=history_motion_tensor, num_samples=num_samples,
         )
+        window_started = time.perf_counter()
         samples = backend.autoregressive_step(
             num_frames=num_frames,
             num_denoising_steps=session.gui_elements.gui_diffusion_steps_slider.value,
@@ -282,6 +285,9 @@ class GenerationMixin:
             init_global_translation=init_global_translation,
             init_first_heading_angle=init_first_heading_angle,
         )
+
+        self.note_compute(session, start_frame=0 if session.motion_tensor is None else history_end_idx + 1,
+                          backend=backend, seconds=time.perf_counter() - window_started)
 
         # Convert to joints
         samples_unnormalized = session.motion_rep.unnormalize(samples)

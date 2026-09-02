@@ -115,6 +115,7 @@ class GuiMixin:
         # Active prompt label
         g.gui_active_prompt_label = client.gui.add_markdown("**Active Prompt:** A person is walking.")
         g.gui_now_playing = client.gui.add_markdown("**Now playing:** \u2013")
+        g.gui_compute_label = client.gui.add_markdown("**Compute:** \u2013")
 
         tab_group = client.gui.add_tab_group()
 
