@@ -3,6 +3,7 @@
 """LLM2Vec encoder wrapper for ARDY text conditioning."""
 
 import os
+from typing import Optional
 
 import numpy as np
 import torch
@@ -17,7 +18,7 @@ class LLM2VecEncoder:
     def __init__(
         self,
         base_model_name_or_path: str,
-        peft_model_name_or_path: str,
+        peft_model_name_or_path: Optional[str],
         dtype: str,
         llm_dim: int,
         device: str = "auto",
@@ -29,7 +30,8 @@ class LLM2VecEncoder:
 
         if "TEXT_ENCODERS_DIR" in os.environ:
             base_model_name_or_path = os.path.join(os.environ["TEXT_ENCODERS_DIR"], base_model_name_or_path)
-            peft_model_name_or_path = os.path.join(os.environ["TEXT_ENCODERS_DIR"], peft_model_name_or_path)
+            if peft_model_name_or_path is not None:
+                peft_model_name_or_path = os.path.join(os.environ["TEXT_ENCODERS_DIR"], peft_model_name_or_path)
 
         self.model = LLM2Vec.from_pretrained(
             base_model_name_or_path=base_model_name_or_path,

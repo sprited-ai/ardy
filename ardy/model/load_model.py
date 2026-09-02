@@ -19,6 +19,15 @@ from .registry import hf_repo_id, resolve_model_name
 from ..tools import get_default_device
 
 DEFAULT_TEXT_ENCODER = "llm2vec"
+# Pre-built (LoRA-merged, optionally weight-only quantized) encoder checkpoints written by
+# scripts/merge_llm2vec_lora.py. int4 (~5 GB) is what makes the encoder fit on a 16 GB Apple
+# Silicon machine; int8 (~9 GB) is a near-lossless reference; "merged" is the plain 16 GB model.
+TEXT_ENCODERS_CACHE_DIR = Path.home() / ".cache" / "ardy" / "text_encoders"
+_LOCAL_LLM2VEC = {
+    "llm2vec-int4": TEXT_ENCODERS_CACHE_DIR / "LLM2Vec-Meta-Llama-3-8B-Instruct-int4",
+    "llm2vec-int8": TEXT_ENCODERS_CACHE_DIR / "LLM2Vec-Meta-Llama-3-8B-Instruct-int8",
+    "llm2vec-merged": TEXT_ENCODERS_CACHE_DIR / "LLM2Vec-Meta-Llama-3-8B-Instruct-merged",
+}
 TEXT_ENCODER_PRESETS = {
     "llm2vec": {
         "target": "ardy.model.LLM2VecEncoder",
@@ -29,8 +38,40 @@ TEXT_ENCODER_PRESETS = {
             "llm_dim": 4096,
             "device": "auto",
         },
-    }
+    },
+    **{
+        name: {
+            "target": "ardy.model.LLM2VecEncoder",
+            "kwargs": {
+                "base_model_name_or_path": str(path),
+                "peft_model_name_or_path": None,
+                "dtype": "float16",
+                "llm_dim": 4096,
+                "device": "auto",
+            },
+        }
+        for name, path in _LOCAL_LLM2VEC.items()
+    },
 }
+
+
+def default_text_encoder_name() -> str:
+    """Preset used when TEXT_ENCODER is unset.
+
+    On MPS (Apple Silicon) the 16 GB bf16 encoder cannot be loaded, so prefer a local int4 (then
+    int8) checkpoint if one has been built; elsewhere keep the original HF/PEFT pipeline.
+    """
+    if str(get_default_device()).startswith("mps"):
+        for name in ("llm2vec-int4", "llm2vec-int8"):
+            if _LOCAL_LLM2VEC[name].exists():
+                return name
+        raise RuntimeError(
+            "No local LLM2Vec checkpoint found for MPS. The default text encoder (Llama-3-8B, 16 GB in\n"
+            "bf16) does not fit on Apple Silicon machines; build the int4 variant once with:\n"
+            "    python scripts/merge_llm2vec_lora.py\n"
+            "or set TEXT_ENCODER=llm2vec to force the full-precision pipeline (needs ~20 GB RAM)."
+        )
+    return DEFAULT_TEXT_ENCODER
 
 
 def _download_from_hf(full_name: str) -> Path:
@@ -56,7 +97,7 @@ def _build_api_text_encoder_conf(text_encoder_url: str) -> dict:
 
 
 def _build_local_text_encoder_conf(text_encoder_fp32: bool = False) -> dict:
-    text_encoder_name = get_env_var("TEXT_ENCODER", DEFAULT_TEXT_ENCODER)
+    text_encoder_name = get_env_var("TEXT_ENCODER") or default_text_encoder_name()
     if text_encoder_name not in TEXT_ENCODER_PRESETS:
         available = ", ".join(sorted(TEXT_ENCODER_PRESETS))
         raise ValueError(f"Unknown TEXT_ENCODER='{text_encoder_name}'. Available: {available}")

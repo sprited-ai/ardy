@@ -89,10 +89,10 @@ datasets/bones-seed/
 
 ### Apple Silicon (macOS, MPS)
 
-ARDY also runs on Apple Silicon Macs through PyTorch's MPS backend. Device selection is automatic
-(`cuda` > `mps` > `cpu`, see `ardy.tools.get_default_device()`; override with `ARDY_DEVICE=cpu`), the text
-encoder runs in float16 on MPS (bf16 has no native math on M1/M2 and is ~2x slower there), and the demo's
-*Text Encoder* dropdown gains `mps / float16` entries.
+ARDY also runs on Apple Silicon Macs through PyTorch's MPS backend, including 16 GB machines. Everything
+except the text encoder works out of the box; the text encoder (LLM2Vec on Llama-3-8B, 16 GB in bf16)
+does not fit next to macOS on 16 GB, so it is run from a one-time, LoRA-merged **int4** checkpoint
+(~5 GB) using PyTorch's built-in weight-only int4 kernels (no extra dependencies).
 
 ```bash
 # Python 3.12 venv (uv or plain venv); the macOS arm64 torch wheel already includes MPS.
@@ -101,20 +101,52 @@ uv pip install "torch>=2.10" pybind11
 # CMake 4 needs this for the pinned pybind11/Eigen versions fetched by the C++ extension build.
 CMAKE_POLICY_VERSION_MINIMUM=3.5 uv pip install -e ".[demo]"     # no [trt]: TensorRT is NVIDIA-only
 
-python scripts/generate.py "A person walks in a circle."
+# One-time (~5 min after the 16 GB Llama download; needs Llama-3 access on your HF account, see above):
+# merges the two LLM2Vec LoRA adapters into the base weights and writes the int4 checkpoint to
+# ~/.cache/ardy/text_encoders/LLM2Vec-Meta-Llama-3-8B-Instruct-int4 (~4.4 GB). The 16 GB download
+# in ~/.cache/huggingface can be deleted afterwards.
+python scripts/merge_llm2vec_lora.py
+
+python scripts/generate.py "A person walks in a circle."     # picks mps + the int4 encoder automatically
 python scripts/run_demo.py --no-compile                      # interactive demo (no TensorRT / torch.compile)
 ```
 
-- **Memory:** the default text encoder (LLM2Vec on Llama-3-8B) is 16 GB in half precision and MPS caps one
-  process at about two thirds of unified memory (`torch.mps.recommended_max_memory()`), so it needs a 32 GB+
-  Mac. On smaller machines run the encoder elsewhere (`scripts/run_text_encoder_server.py` + `TEXT_ENCODER_URL`).
+<details>
+<summary>Details, numbers and knobs</summary>
+
+- **Device selection:** `ardy.tools.get_default_device()` returns `cuda` > `mps` > `cpu`; override with
+  `ARDY_DEVICE=cpu`. The demo's *Text Encoder* dropdown gains `mps / float16` entries.
+- **Text encoder presets:** on MPS `load_text_encoder()` defaults to the local `llm2vec-int4` checkpoint
+  (then `llm2vec-int8` if that is the only one built). `TEXT_ENCODER=llm2vec` forces the original HF/PEFT
+  pipeline (needs ~20 GB of memory). `scripts/merge_llm2vec_lora.py --quantize int4 int8` also writes the
+  ~8 GB int8 variant (near-lossless reference), `--quantize none` the plain merged 16 GB model.
+- **Quantization:** weight-only, group size 64, asymmetric with MSE-optimal clipping, computed with
+  `torch._weight_int4pack_mm` (MPS/CUDA) or a dequantize fallback (CPU). Embeddings and norms stay fp16.
+  See `ardy/model/llm2vec/quantized.py`. Encoding a prompt takes ~0.3-0.9 s on an M1 Pro; the demo caches
+  embeddings on disk, so presets are encoded once.
+- **Memory (M1 Pro 16 GB):** int4 encoder ~5.6 GB + ARDY-Core model ~1 GB of MPS memory. MPS limits one
+  process to about two thirds of unified memory (`torch.mps.recommended_max_memory()`), which is why int8
+  (~9 GB) is only comfortable when nothing else is loaded.
+- **Speed (M1 Pro, 10 denoising steps):** one autoregressive window costs ~0.29 s on MPS (~0.8 s on CPU):
+  ~6.8x real time for the Horizon40 models (40 frames = 2 s of motion per window) and ~1.4x real time for
+  the Horizon8 models (8 frames = 0.4 s per window). The interactive demo runs at its native 20 fps with
+  ARDY-Core-Horizon40. The MPS path is latency-bound (many small kernels), which is why the generation loop
+  avoids host syncs: no boolean-mask gathers, cached diffusion schedule / guidance weights, normalization
+  stats kept on the device, and the positional-encoding range assert is opt-in (`ARDY_CHECK_PE_INDEX=1`).
+  These changes are numerically neutral (bit-identical on CPU; MPS matches CPU to ~1e-5).
 - **Not available on macOS:** TensorRT (`[trt]` extra, *ONNX-TRT* acceleration modes). Keep the demo's
   *Acceleration* dropdown on `None` (`--no-compile`): `torch.compile` (inductor) does run on MPS with
   torch 2.10 but was 2x slower than eager here and its output diverged from eager, so it is not used.
+  transformers' `MetalConfig` quantizer was tried but its prebuilt Metal kernels fail to create pipelines on
+  macOS 15 (and only ship for torch 2.8-2.10).
 - `PYTORCH_ENABLE_MPS_FALLBACK=1` is not required; all ops used at inference have MPS kernels.
 - **Browser note:** if the demo page loads but the viewport never connects (server log shows
   `websockets ... line too long`), open `http://127.0.0.1:2333` instead of `localhost`: a large cookie jar on
   `localhost` can push the websocket handshake over the 8 KB header limit.
+- **Encoder fidelity:** int4 embeddings have cosine similarity ~0.98 to the int8 (near-lossless) ones.
+  `TEXT_ENCODER=llm2vec-int8` is a drop-in higher-fidelity option when ~9 GB of MPS memory is free.
+
+</details>
 
 ---
 
