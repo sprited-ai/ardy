@@ -79,7 +79,11 @@ $('updatePrompt').onclick = updatePrompt;
 $('enableEncoder').onclick = async () => {
   $('enableEncoder').disabled = true;
   try {
-    const ok = await loadTextEncoder((p) => { if (p.stage === 'download') { $('encStatus').textContent = `downloading ${(p.got / 1e6).toFixed(0)} / ${(p.total / 1e6).toFixed(0)} MB`; $('loading').style.transform = `scaleX(${p.total ? p.got / p.total : 0})`; } else $('encStatus').textContent = p.cached ? 'loading cached encoder…' : `${p.stage}${p.ep ? ' (' + p.ep + ')' : ''}…`; });
+    const ok = await loadTextEncoder((p) => {
+      if (p.got !== undefined) { $('encStatus').textContent = `${p.part || ''}: downloading ${(p.got / 1e6).toFixed(0)} / ${(p.total / 1e6).toFixed(0)} MB`; $('loading').style.transform = `scaleX(${p.total ? p.got / p.total : 0})`; }
+      else if (p.cached) $('encStatus').textContent = `${p.part || ''}: loading from cache…`;
+      else $('encStatus').textContent = `${p.part ? p.part + ': ' : ''}${p.stage || ''}${p.ep ? ' (' + p.ep + ')' : ''}…`;
+    });
     $('loading').style.transform = 'scaleX(0)';
     if (!ok) { $('encStatus').textContent = 'download declined'; $('enableEncoder').disabled = false; return; }
     $('encStatus').textContent = `text encoder ready on ${textEncoderState().backend}`; $('customPrompt').disabled = $('encodePrompt').disabled = false; toast('Text encoder ready', ENCODER.label, 'green');
@@ -144,5 +148,6 @@ setInterval(() => {   // Debug folder
 engine.on((ev, data) => { if (ev === 'window' && data.start === 0) viewer.setStartArrow([0, 0, 0], 0); });
 $('activePrompt').textContent = promptsMeta.prompts[0];
 status(`ready on ${backend}`, true);
+window.__ardy = { engine, state, textEncoderState, ENCODER };   // for debugging from the console
 toast('Model loaded', `${MODELS[modelId].label} on ${backend}`, 'green');
 schedule('initial');
