@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ARDY · in the browser</title>
+<style>
+  :root { --bg: #ffffff; --panel: #ffffff; --fg: #1f2329; --muted: #6b7280; --border: #e3e6ec; --accent: #2864c8; --accent2: #22a06b; --row: #f3f4f7; }
+  html.dark { --bg: #14171c; --panel: #1b1f26; --fg: #e6e8ec; --muted: #9aa1ad; --border: #2d3340; --row: #1c2129; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 13px/1.4 system-ui, -apple-system, sans-serif; }
+  #header { position: fixed; top: 0; left: 0; right: 0; height: 36px; display: flex; align-items: center; gap: 12px; padding: 0 14px; background: var(--panel); border-bottom: 1px solid var(--border); z-index: 5; }
+  #header .brand { font-weight: 800; letter-spacing: .02em; } #header .brand small { color: var(--muted); font-weight: 500; margin-left: 8px; }
+  #header .links { margin-left: auto; display: flex; gap: 8px; } #header a, #header button.link { font-size: 12px; color: var(--fg); text-decoration: none; border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; background: var(--panel); cursor: pointer; }
+  #view { position: fixed; top: 36px; left: 0; right: 0; bottom: var(--tl-h, 150px); }
+  #view canvas { display: block; width: 100% !important; height: 100% !important; }
+  #panel { position: fixed; top: 48px; right: 12px; width: 300px; max-height: calc(100% - var(--tl-h, 150px) - 60px); overflow: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.12); z-index: 4; }
+  #panel .head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); font-weight: 700; }
+  #panel .head .dot { width: 8px; height: 8px; border-radius: 50%; background: #e0a; } #panel .head .dot.ok { background: var(--accent2); }
+  #panel .labels { padding: 8px 12px 4px; } #panel .labels p { margin: 2px 0; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 2px; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+  .tabs button { border: 0; background: transparent; color: var(--fg); padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 12px; } .tabs button.on { background: var(--row); font-weight: 600; }
+  .tab { display: none; padding: 8px 12px 12px; } .tab.on { display: block; }
+  .ctl { display: grid; grid-template-columns: 110px 1fr; align-items: center; gap: 6px 8px; margin: 6px 0; font-size: 12px; } .ctl label { color: var(--muted); }
+  .ctl input[type=number], .ctl input[type=text], .ctl select { width: 100%; box-sizing: border-box; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--fg); font-size: 12px; }
+  .ctl input[type=range] { width: 100%; }
+  button.wide { width: 100%; margin: 4px 0; padding: 7px; border: 0; border-radius: 6px; background: #a9c6f5; color: #0c2a5c; font-weight: 600; cursor: pointer; } button.wide.primary { background: var(--accent); color: #fff; } button.wide.green { background: var(--accent2); color: #fff; } button.wide.secondary { background: var(--row); color: var(--fg); } button.wide:disabled { opacity: .5; cursor: default; }
+  details { border: 1px solid var(--border); border-radius: 6px; margin: 8px 0; } details summary { padding: 5px 8px; cursor: pointer; font-weight: 600; font-size: 12px; } details .body { padding: 4px 8px 8px; }
+  .presets button { display: block; width: 100%; text-align: left; margin: 3px 0; padding: 5px 8px; border: 1px solid var(--border); background: var(--row); color: var(--fg); border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .mono { font: 11px/1.5 ui-monospace, monospace; white-space: pre-wrap; color: var(--muted); }
+  .hint { color: var(--muted); font-size: 11px; margin: 2px 0 6px; }
+  #timeline { position: fixed; left: 0; right: 0; bottom: 0; height: var(--tl-h, 150px); background: var(--panel); border-top: 1px solid var(--border); z-index: 4; } #timeline canvas { width: 100%; display: block; touch-action: none; }
+  #toasts { position: fixed; top: 46px; left: 12px; z-index: 6; display: flex; flex-direction: column; gap: 6px; max-width: 320px; }
+  .toast { background: var(--panel); border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 8px; padding: 8px 10px; box-shadow: 0 4px 16px rgba(0,0,0,.12); font-size: 12px; } .toast b { display: block; margin-bottom: 2px; } .toast.green { border-left-color: var(--accent2); } .toast.violet { border-left-color: #7c4dff; } .toast.teal { border-left-color: #1aa; } .toast.red { border-left-color: #d33; }
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 20; } .modal-card { background: var(--panel); color: var(--fg); border-radius: 12px; padding: 18px 20px; width: min(420px, 90vw); box-shadow: 0 10px 40px rgba(0,0,0,.3); } .modal-card h3 { margin: 0 0 8px; } .modal-card .muted { color: var(--muted); font-size: 12px; } .modal-card .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; } .modal-card button { padding: 7px 12px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; font-weight: 600; } .modal-card button.secondary { background: var(--row); color: var(--fg); }
+  #loading { position: fixed; top: 36px; left: 0; right: 0; height: 3px; background: var(--accent); transform-origin: left; transform: scaleX(0); z-index: 7; transition: transform .2s; }
+  @media (max-width: 720px) { #panel { width: calc(100% - 24px); max-height: 45%; } }
+</style>
+</head>
+<body>
+<div id="header"><span class="brand">ARDY <small>text-to-motion, entirely in your browser</small></span>
+  <div class="links"><a href="https://research.nvidia.com/labs/sil/projects/ardy/" target="_blank" rel="noopener">Project Page</a><a href="https://github.com/sprited-ai/ardy" target="_blank" rel="noopener">GitHub</a><button class="link" id="darkToggle">◐</button></div></div>
+<div id="loading"></div>
+<div id="view"></div>
+<div id="toasts"></div>
+<div id="panel">
+  <div class="head"><span class="dot" id="dot"></span><span>ARDY</span><span id="status" class="hint" style="margin-left:auto;font-weight:400">loading…</span></div>
+  <div class="labels"><p><b>Active Prompt:</b> <span id="activePrompt">–</span></p><p><b>Now playing:</b> <span id="nowPlaying">–</span></p><p><b>Compute:</b> <span id="compute">–</span></p></div>
+  <div class="tabs" id="tabs"><button data-tab="playback" class="on">▷ Playback</button><button data-tab="text">✎ Text</button><button data-tab="generate">✦ Generate</button><button data-tab="visualize">◉ Visualize</button><button data-tab="model">⚙ Model</button><button data-tab="io">⇅ IO</button><button data-tab="help">ⓘ Instructions</button></div>
+  <div class="tab on" id="tab-playback">
+    <button class="wide" id="playBtn" disabled>Play</button><button class="wide" id="nextBtn">⏭ Next Frame</button><button class="wide" id="prevBtn">⏮ Prev Frame</button>
+    <div class="ctl"><label>Actual FPS</label><input type="number" id="actualFps" disabled><label>Current Time (s)</label><input type="number" id="curTime" disabled><label>Native FPS</label><input type="number" id="nativeFps" disabled><label>Frame Index</label><input type="number" id="frameIdx" min="0" step="1" value="0"><label>Enable Auto Replan</label><input type="checkbox" id="autoReplan" checked></div>
+    <details><summary>Debug</summary><div class="body"><div class="mono" id="debugMem">–</div><div class="mono" id="debugGen">–</div></div></details>
+  </div>
+  <div class="tab" id="tab-text">
+    <details><summary>Prompt List</summary><div class="body presets" id="presets"></div></details>
+    <div class="ctl"><label>Prompt</label><select id="promptSel"></select></div>
+    <p class="hint">Free-text prompts need the 8B text encoder, which does not run in a browser; this build ships precomputed embeddings for the prompts above.</p>
+    <button class="wide green" id="updatePrompt">Update Text Prompt</button>
+  </div>
+  <div class="tab" id="tab-generate">
+    <button class="wide" id="restartBtn">Restart</button><button class="wide" id="restartNowBtn">Restart From Now</button>
+    <div class="ctl"><label>Text guidance</label><input type="range" id="cfg" min="1" max="7" step="0.5" value="3.5"><label></label><span id="cfgv" class="hint">3.5</span>
+      <label>Replan trigger (frames)</label><input type="number" id="replanThresh" value="30" min="4" step="1"><label>Seed</label><input type="number" id="seed" value="42" step="1"><label>Denoising steps</label><input type="number" id="steps" value="10" disabled><label>History (frames)</label><input type="number" id="hist" value="4" disabled></div>
+    <p class="hint">Steps and history length are baked into the exported graph. Kinematic constraints (keyframes, waypoints) are not available in the browser build yet.</p>
+  </div>
+  <div class="tab" id="tab-visualize">
+    <div class="ctl"><label>Skinned mesh</label><input type="checkbox" id="showMesh" checked><label>Mesh opacity</label><input type="range" id="meshOpacity" min="0.1" max="1" step="0.05" value="1"><label>Skeleton</label><input type="checkbox" id="showSkel"><label>Follow camera</label><input type="checkbox" id="followCam" checked><label>Dark mode</label><input type="checkbox" id="darkMode"></div>
+  </div>
+  <div class="tab" id="tab-model">
+    <div class="ctl"><label>Model</label><select id="modelSel"></select><label>Backend</label><input type="text" id="backend" disabled><label>Source</label><input type="text" id="modelSrc" disabled><label>Cache</label><input type="text" id="cacheState" disabled></div>
+    <button class="wide secondary" id="clearCache">Clear cached model</button>
+    <p class="hint">Models are downloaded from Hugging Face (sprited/ardy-web-onnx) on first use and kept in the browser cache.</p>
+  </div>
+  <div class="tab" id="tab-io">
+    <button class="wide" id="exportSession">Export session (JSON)</button><button class="wide secondary" id="importSession">Import session</button><input type="file" id="importFile" accept="application/json" hidden>
+    <button class="wide secondary" id="exportMotion">Export motion (joints CSV)</button>
+  </div>
+  <div class="tab" id="tab-help"><p>Pick a prompt in the <b>Text</b> tab and press <b>Update Text Prompt</b>; the new prompt takes effect from the next frame. <b>Play</b> streams motion: windows of 2 s are generated ahead on your GPU (WebGPU) and re-planned when playback approaches the end. Drag on the timeline to scrub. Left-drag rotates, right-drag pans, scroll zooms.</p><p class="hint">Everything runs client-side; the only network traffic is the one-time model download.</p></div>
+</div>
+<div id="timeline"><canvas id="tl"></canvas></div>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.29.0/dist/ort.webgpu.min.js" crossorigin="anonymous"></script>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/" } }</script>
+<script type="module" src="app/main.js"></script>
+</body>
+</html>

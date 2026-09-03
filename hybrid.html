@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ARDY demo · WebGPU in the browser</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #101318; color: #e6e6e6; font: 13px system-ui, sans-serif; }
+  #bar { position: fixed; left: 0; right: 0; bottom: 0; height: 30px; display: flex; align-items: center; gap: 12px; padding: 0 12px; background: #161a22; border-top: 1px solid #333a48; z-index: 10; }
+  #bar b { color: #7fe0a8; }
+  iframe { position: fixed; inset: 0 0 30px 0; width: 100%; height: calc(100% - 30px); border: 0; background: white; }
+</style>
+</head>
+<body>
+<iframe id="viser" allow="fullscreen"></iframe>
+<div id="bar"><b>WebGPU worker</b><span id="wstatus">starting…</span></div>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.29.0/dist/ort.webgpu.min.js"></script>
+<script>
+  // ?viser=http://host:2333  ?backend=webgpu|wasm  ?wsport=2334
+  const p = new URLSearchParams(location.search);
+  document.getElementById('viser').src = p.get('viser') || `http://${location.hostname}:2333/`;
+</script>
+<script src="worker.js"></script>
+</body>
+</html>
