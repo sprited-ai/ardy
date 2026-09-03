@@ -54,8 +54,14 @@
   <div class="tab" id="tab-text">
     <details><summary>Prompt List</summary><div class="body presets" id="presets"></div></details>
     <div class="ctl"><label>Prompt</label><select id="promptSel"></select></div>
-    <p class="hint">Free-text prompts need the 8B text encoder, which does not run in a browser; this build ships precomputed embeddings for the prompts above.</p>
     <button class="wide green" id="updatePrompt">Update Text Prompt</button>
+    <details><summary>Free-text prompts (optional, 5 GB)</summary><div class="body">
+      <p class="hint">Downloads the Llama-3 LLM2Vec text encoder as INT4 ONNX (TREE Industries' export, ~5 GB, cached) and runs it on your GPU. Desktop with 16 GB+ recommended.</p>
+      <button class="wide secondary" id="enableEncoder">Enable free-text prompts</button>
+      <div class="ctl"><label>Custom prompt</label><input type="text" id="customPrompt" placeholder="a person walks forward calmly" disabled></div>
+      <button class="wide" id="encodePrompt" disabled>Encode & use prompt</button>
+      <div class="hint" id="encStatus"></div>
+    </div></details>
   </div>
   <div class="tab" id="tab-generate">
     <button class="wide" id="restartBtn">Restart</button><button class="wide" id="restartNowBtn">Restart From Now</button>

@@ -44,8 +44,8 @@ export async function fetchModel(url, onProgress) {
 }
 
 /** Ask before a large download on phones / metered connections (remembered per model in localStorage). */
-export async function confirmDownload(modelId, url) {
-  const info = deviceInfo(); const m = MODELS[modelId];
+export async function confirmDownload(modelId, url, descriptor) {
+  const info = deviceInfo(); const m = descriptor || MODELS[modelId];
   if (await isCached(url)) return true;
   const key = 'ardy-web-download-ok:' + modelId;
   let remembered = null; try { remembered = localStorage.getItem(key); } catch (_) {}
