@@ -43,13 +43,17 @@ URL flags: `?models=local|hf|<prefix/>` (default: `./models/` if present, else H
   Restart From Now, seeded noise. `app/viewer.js` poses the Core skin with linear blend skinning
   (`ardy/viz/core_skin.py` math) from the graph's joint positions and rotations. `app/timeline.js` is the demo's
   timeline (frame ruler, prompt segments, constraint track rows, draggable cursor).
-- Text prompts come from a precomputed embedding library (20 prompts). **Free-text prompts** are optional: the Text tab
-  can download the Llama-3 LLM2Vec encoder as INT4 ONNX (three parts, 5 GB, from
-  [sprited/ardy-web-onnx/text-encoder](https://huggingface.co/sprited/ardy-web-onnx/tree/main/text-encoder)) and run it
-  in three Web Workers, one onnxruntime-web instance each (a single instance cannot hold more than ~2 GB of weights).
-  `app/text_encoder.js` tokenizes exactly like ARDY (Llama-3 user header, left padding to 64, `embed_mask` on the prompt
-  tokens) and chains the parts. Built by `build_text_encoder_onnx.py` (ARDY's merged weights, re-quantized to 4-bit
-  MatMulNBits; the source graph's causal mask replaced by a bidirectional one) and `split_text_encoder.py`.
+- Text prompts: the window graph takes the denoiser's text *conditions* (root 1024 + body 1024; `window_cond.onnx`).
+  Presets (20 precomputed LLM2Vec features) go through `text_proj.onnx` (the two `embed_text` layers, 34 MB).
+  **Free-text prompts** are optional, with two encoders in the Text tab:
+  - *small* (default): [intsuc's MiniLM student](https://huggingface.co/intsuc/Llama-3-ARDY-Mini-Core40-Browser)
+    (all-MiniLM-L6-v2 distilled to ARDY's conditions, fp32 ONNX ~110 MB gunzipped in the browser), loaded from its own
+    Hugging Face repo; cosine 0.98 (root) / 0.96 (body) against ARDY's projections of the real 8B feature. Any device.
+  - *exact*: ARDY's own Llama-3 LLM2Vec encoder as INT4 ONNX in three parts (5 GB,
+    [sprited/ardy-web-onnx/text-encoder](https://huggingface.co/sprited/ardy-web-onnx/tree/main/text-encoder)) run in
+    three Web Workers, one onnxruntime-web instance each (a single instance cannot hold more than ~2 GB of weights).
+    Built by `build_text_encoder_onnx.py` (ARDY's merged weights, 4-bit MatMulNBits; the source graph's causal mask
+    replaced by a bidirectional one) and `split_text_encoder.py`. Needs a 16 GB+ desktop and pushes it to swap.
 
 ## Measured (M1 Pro 16 GB, Chrome 152, fp32 graph)
 
