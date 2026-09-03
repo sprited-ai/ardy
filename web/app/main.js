@@ -24,7 +24,8 @@ for (const [id, m] of Object.entries(MODELS)) { const o = document.createElement
 $('modelSel').onchange = () => { location.search = '?model=' + $('modelSel').value; };
 const base = await resolveBase(modelId);
 $('modelSrc').value = base.startsWith('http') && !base.startsWith(location.origin) ? 'Hugging Face' : 'local files';
-const cfg = await fetchJSON(base + 'window.json'); const skeleton = await fetchJSON(base + 'skeleton.json'); const promptsMeta = await fetchJSON(base + 'prompts.json');
+const cfg = await fetchJSON(base + 'window.json');
+if (!cfg.cond_dim) throw new Error('this build needs the condition-input window graph (window.json without cond_dim)'); const skeleton = await fetchJSON(base + 'skeleton.json'); const promptsMeta = await fetchJSON(base + 'prompts.json');
 const promptFeats = new Float32Array((await fetchModel(base + 'prompts.bin')).buffer);
 let skin = null;
 try { const man = await fetchJSON(base + `skin_${skeleton.name}.json`); const buf = (await fetchModel(base + `skin_${skeleton.name}.bin`)).buffer;
@@ -50,7 +51,13 @@ for (const ep of (params.get('backend') ? [params.get('backend')] : navigator.gp
 }
 if (!session) { status('no WebGPU/WASM backend available'); throw new Error('no backend'); }
 $('loading').style.transform = 'scaleX(0)'; $('backend').value = backend;
-const engine = new Engine(session, cfg, skeleton, promptFeats, promptsMeta.prompts); engine.backend = backend;
+// text_proj: LLM2Vec feature (4096) -> the denoiser's text conditions (2048); tiny, used for presets and the 8B encoder
+const LLM_DIM = cfg.llm_dim;
+const projBytes = await fetchModel(base + (cfg.text_proj || 'text_proj.onnx'));
+const projSession = await ort.InferenceSession.create(projBytes, { executionProviders: [backend, 'wasm'] });
+async function projectFeat(feat4096) { const out = await projSession.run({ text_feat: new ort.Tensor('float32', feat4096, [1, 1, LLM_DIM]) }); return Float32Array.from(out.cond.data); }
+const presetConds = []; for (let i = 0; i < promptsMeta.prompts.length; i++) presetConds.push(await projectFeat(promptFeats.subarray(i * LLM_DIM, (i + 1) * LLM_DIM)));
+const engine = new Engine(session, cfg, skeleton, presetConds, promptsMeta.prompts); engine.backend = backend;
 
 // ---------------------------------------------------------------- playback state
 const state = { frame: 0, playing: false, fpsSamples: [], lastTick: performance.now(), acc: 0, nowPlaying: null, nowCompute: null, computeKind: null };
@@ -79,20 +86,21 @@ $('updatePrompt').onclick = updatePrompt;
 $('enableEncoder').onclick = async () => {
   $('enableEncoder').disabled = true;
   try {
+    const which = document.querySelector('input[name="encKind"]:checked').value;
     const ok = await loadTextEncoder((p) => {
       if (p.got !== undefined) { $('encStatus').textContent = `${p.part || ''}: downloading ${(p.got / 1e6).toFixed(0)} / ${(p.total / 1e6).toFixed(0)} MB`; $('loading').style.transform = `scaleX(${p.total ? p.got / p.total : 0})`; }
       else if (p.cached) $('encStatus').textContent = `${p.part || ''}: loading from cache…`;
       else $('encStatus').textContent = `${p.part ? p.part + ': ' : ''}${p.stage || ''}${p.ep ? ' (' + p.ep + ')' : ''}…`;
-    });
+    }, which);
     $('loading').style.transform = 'scaleX(0)';
     if (!ok) { $('encStatus').textContent = 'download declined'; $('enableEncoder').disabled = false; return; }
-    $('encStatus').textContent = `text encoder ready on ${textEncoderState().backend}`; $('customPrompt').disabled = $('encodePrompt').disabled = false; toast('Text encoder ready', ENCODER.label, 'green');
+    $('encStatus').textContent = `${textEncoderState().kind} text encoder ready on ${textEncoderState().backend}`; $('customPrompt').disabled = $('encodePrompt').disabled = false; toast('Text encoder ready', textEncoderState().label, 'green');
   } catch (e) { $('encStatus').textContent = 'failed: ' + (e.message || e); $('enableEncoder').disabled = false; console.error(e); }
 };
 $('encodePrompt').onclick = async () => {
   const text = $('customPrompt').value.trim(); if (!text) return;
   $('encodePrompt').disabled = true; $('encStatus').textContent = 'encoding…';
-  try { const { feat, ms } = await encodePrompt(text); const idx = engine.addPrompt(text, feat); promptsMeta.prompts.push(text);
+  try { const r = await encodePrompt(text); const cond = r.cond || await projectFeat(r.feat); const ms = r.ms; const idx = engine.addPrompt(text, cond); promptsMeta.prompts.push(text);
     const o = document.createElement('option'); o.value = idx; o.textContent = text; $('promptSel').appendChild(o); $('promptSel').value = idx;
     $('encStatus').textContent = `encoded in ${ms.toFixed(0)} ms`; updatePrompt();
   } catch (e) { $('encStatus').textContent = 'encode failed: ' + (e.message || e); console.error(e); } finally { $('encodePrompt').disabled = false; }

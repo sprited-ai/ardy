@@ -3,7 +3,8 @@
 export class Engine {
   constructor(session, cfg, skeleton, promptFeats, prompts) {
     this.session = session; this.cfg = cfg; this.skeleton = skeleton; this.prompts = prompts.slice();
-    this.feats = prompts.map((_, i) => promptFeats.subarray(i * cfg.llm_dim, (i + 1) * cfg.llm_dim));
+    this.condDim = cfg.cond_dim || 2048;
+    this.conds = promptFeats;   // Float32Array(condDim) per prompt (text conditions = root+body embed_text of the LLM2Vec feature)
     this.H = cfg.history_frames; this.G = cfg.gen_frames; this.T = this.H + this.G; this.J = skeleton.parents.length;
     this.D = cfg.motion_dim; this.tokenDim = cfg.token_dim; this.llmDim = cfg.llm_dim; this.fps = cfg.fps;
     this.initHistory = Float32Array.from(cfg.init_history.flat());
@@ -19,7 +20,7 @@ export class Engine {
   }
   get maxFrame() { return this.frames.length - 1; }
   setSeed(s) { this.seed = s; this.rng = mulberry32(s); }
-  addPrompt(text, feat) { this.prompts.push(text); this.feats.push(feat); return this.prompts.length - 1; }
+  addPrompt(text, cond) { this.prompts.push(text); this.conds.push(cond); return this.prompts.length - 1; }
   promptAt(frame) { let p = null; for (const [f, idx] of this.promptSchedule) if (frame >= f) p = idx; return p; }
   computeAt(frame) { let c = null; for (const e of this.computeSchedule) if (frame >= e.start) c = e; return c; }
   schedulePrompt(startFrame, promptIdx) { this.promptSchedule = this.promptSchedule.filter(([f]) => f < startFrame); this.promptSchedule.push([startFrame, promptIdx]); }
@@ -42,7 +43,7 @@ export class Engine {
     try {
       const out = await this.session.run({
         history: new ort.Tensor('float32', hist, [1, this.H, this.D]),
-        text_feat: new ort.Tensor('float32', this.feats[pi], [1, 1, this.llmDim]),
+        cond: new ort.Tensor('float32', this.conds[pi], [1, 1, this.condDim]),
         noise: new ort.Tensor('float32', this.randn((this.G / 4 | 0) * this.tokenDim), [1, this.G / 4 | 0, this.tokenDim]),
         cfg_weight_text: new ort.Tensor('float32', Float32Array.from([this.cfgText]), [1]),
         cfg_weight_cstr: new ort.Tensor('float32', Float32Array.from([this.cfgCstr]), [1]),

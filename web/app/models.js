@@ -32,11 +32,13 @@ export async function isCached(url) { try { const c = await caches.open(CACHE); 
 export async function clearCache() { try { return await caches.delete(CACHE); } catch (_) { return false; } }
 
 /** Fetch a large file with progress, keeping a copy in Cache Storage so the next visit does not download again. */
-export async function fetchModel(url, onProgress) {
+export async function fetchModel(url, onProgress, { gunzip = false } = {}) {
   let cache = null; try { cache = await caches.open(CACHE); } catch (_) {}
   if (cache) { const hit = await cache.match(url); if (hit) { onProgress && onProgress({ cached: true }); return new Uint8Array(await hit.arrayBuffer()); } }
   const r = await fetch(url); if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
-  const total = +r.headers.get('Content-Length') || 0; const reader = r.body.getReader(); const chunks = []; let got = 0;
+  const total = gunzip ? 0 : (+r.headers.get('Content-Length') || 0);
+  const body = gunzip ? r.body.pipeThrough(new DecompressionStream('gzip')) : r.body;
+  const reader = body.getReader(); const chunks = []; let got = 0;
   for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; onProgress && onProgress({ got, total }); }
   const out = new Uint8Array(got); let o = 0; for (const ch of chunks) { out.set(ch, o); o += ch.length; }
   if (cache) { try { await cache.put(url, new Response(out, { headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String(got) } })); } catch (e) { console.warn('cache put failed', e); } }

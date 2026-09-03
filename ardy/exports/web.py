@@ -170,3 +170,74 @@ def _export(window, dummy, path, opset):
             dynamo=False,
             do_constant_folding=True,
         )
+
+
+class _SliceBias(nn.Module):
+    """Stands in for a block's ``embed_text``: takes its slice of a precomputed 2048-d condition and re-adds the
+    block's own bias, so the CFG wrapper's zeroed branches still get ``bias`` exactly as with the real Linear."""
+
+    def __init__(self, linear: nn.Linear, start: int, end: int):
+        super().__init__()
+        self.start, self.end = start, end
+        self.register_buffer("bias", linear.bias.detach().clone())
+        self.register_buffer("weight", torch.zeros(0, dtype=linear.weight.dtype))  # the block reads embed_text.weight.dtype
+
+    def forward(self, x):
+        return x[..., self.start : self.end] + self.bias
+
+
+class WebWindowCond(WebWindow):
+    """Like :class:`WebWindow`, but conditioned on the denoiser's text *conditions* (root 1024 + body 1024 =
+    ``[1, 1, 2048]``, i.e. ``embed_text`` applied to the LLM2Vec feature) instead of the 4096-d feature. This is what
+    distilled small encoders (e.g. intsuc's MiniLM student) produce, and ``TextProj`` maps the 4096-d feature to it."""
+
+    def __init__(self, model: Ardy, history_frames: int = 4, num_denoising_steps: int = 10):
+        super().__init__(model, history_frames, num_denoising_steps)
+        den = model.denoiser.model
+        self.cond_dim = den.root_model.embed_text.out_features + den.body_model.embed_text.out_features
+        self.register_buffer("cond_bias", torch.cat([den.root_model.embed_text.bias, den.body_model.embed_text.bias]).detach().clone())
+        r = den.root_model.embed_text.out_features
+        den.root_model.embed_text = _SliceBias(den.root_model.embed_text, 0, r)
+        den.body_model.embed_text = _SliceBias(den.body_model.embed_text, r, self.cond_dim)
+
+    def forward(self, history, cond, noise, cfg_weight_text, cfg_weight_cstr):
+        # the swapped embed_text modules add the bias back, so subtract it here; zeroed CFG branches then yield bias
+        return super().forward(history, cond - self.cond_bias, noise, cfg_weight_text, cfg_weight_cstr)
+
+
+class TextProj(nn.Module):
+    """LLM2Vec feature ``[1, 1, 4096]`` -> text conditions ``[1, 1, 2048]`` (root then body ``embed_text``)."""
+
+    def __init__(self, model: Ardy):
+        super().__init__()
+        den = model.denoiser.model
+        self.root = nn.Linear(den.root_model.embed_text.in_features, den.root_model.embed_text.out_features)
+        self.body = nn.Linear(den.body_model.embed_text.in_features, den.body_model.embed_text.out_features)
+        self.root.load_state_dict(den.root_model.embed_text.state_dict()); self.body.load_state_dict(den.body_model.embed_text.state_dict())
+
+    def forward(self, text_feat):
+        return torch.cat([self.root(text_feat), self.body(text_feat)], dim=-1)
+
+
+def export_web_window_cond(window: WebWindowCond, path: str, opset: int = 17) -> None:
+    window.eval()
+    device = next(window.parameters()).device
+    dummy = (
+        torch.zeros(1, window.history_frames, window.model.motion_rep.motion_rep_dim, device=device),
+        torch.zeros(1, 1, window.cond_dim, device=device),
+        torch.zeros(window.noise_shape, device=device),
+        torch.tensor([3.5], device=device),
+        torch.tensor([1.5], device=device),
+    )
+    fastpath = torch.backends.mha.get_fastpath_enabled(); torch.backends.mha.set_fastpath_enabled(False)
+    try:
+        with torch.no_grad():
+            torch.onnx.export(window, dummy, path, input_names=["history", "cond", "noise", "cfg_weight_text", "cfg_weight_cstr"],
+                              output_names=["motion", "joints", "joint_rotations"], opset_version=opset, dynamo=False, do_constant_folding=True)
+    finally:
+        torch.backends.mha.set_fastpath_enabled(fastpath)
+
+
+def export_text_proj(proj: TextProj, path: str, llm_dim: int = 4096, opset: int = 17) -> None:
+    with torch.no_grad():
+        torch.onnx.export(proj.eval(), (torch.zeros(1, 1, llm_dim),), path, input_names=["text_feat"], output_names=["cond"], opset_version=opset, dynamo=False)
