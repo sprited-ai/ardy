@@ -62,7 +62,7 @@ function schedule(kind) {   // plan the next window if playback is close to the 
   if (kind === 'auto' && engine.maxFrame - state.frame > thresh) return false;
   engine.generateWindow({ historyEnd: engine.maxFrame }).then(afterWindow); return true;
 }
-function afterWindow(n) { if (n) { $('frameIdx').max = engine.maxFrame; redrawLabels(); } }
+function afterWindow(n) { if (n) { $('frameIdx').max = engine.maxFrame; setFrame(state.frame); } }
 function replanFrom(frame, promptIdx) {   // the demo's replan: keep frames up to `frame`, regenerate after it
   const historyEnd = Math.max(-1, Math.min(engine.maxFrame, frame));
   if (promptIdx !== undefined) engine.schedulePrompt(historyEnd + 1, promptIdx);
