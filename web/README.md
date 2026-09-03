@@ -16,6 +16,17 @@ web/
   serve.py             local static server with COOP/COEP headers
 ```
 
+## Hosting
+
+Live at **https://ardy.sprited.ai/** as a Cloudflare Worker serving static assets (`web/wrangler.jsonc`, route
+`ardy.sprited.ai/*` on the sprited.ai zone; `web/.assetsignore` keeps the local model files out of the upload):
+
+```bash
+npx wrangler deploy --config web/wrangler.jsonc      # needs `npx wrangler login`
+```
+
+A GitHub Pages mirror is published from the `gh-pages` branch at https://sprited-ai.github.io/ardy/.
+
 URL flags: `?models=local|hf|<prefix/>` (default: `./models/` if present, else Hugging Face), `?backend=webgpu|wasm`,
 `?model=core-rp-20fps-h40`, `?ask=1` (always show the download dialog).
 

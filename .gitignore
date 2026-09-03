@@ -167,3 +167,4 @@ onelogger.err
 
 # browser demo: the exported ONNX graphs are large, regenerate with web/export_web_onnx.py
 web/models/*.onnx
+web-dist/
