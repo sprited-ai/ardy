@@ -169,3 +169,5 @@ onelogger.err
 web/models/*.onnx
 web-dist/
 web/models/encoder/
+.wrangler/
+web/models/encoder-sprited/

@@ -4,7 +4,7 @@ Part A: token ids/masks -> hidden state entering layer `cut`; part B: hidden (+ 
 halves are built by hand from the node graph (the model is too large for onnx's protobuf serializer with data
 loaded), each with its own external data file. Writes <out>/onnx/part_{a,b}.onnx(.data) and <out>/encoder.json.
 
-Usage: python web/split_text_encoder.py <encoder_dir> [cut_layer=16]
+Usage: python web/split_text_encoder.py <encoder_dir> [cut_layers="8,20"]
 """
 
 import json
@@ -19,7 +19,7 @@ import onnxruntime as ort
 from onnx import TensorProto, helper
 from onnx.external_data_helper import load_external_data_for_tensor
 
-enc_dir = sys.argv[1]; cut = int(sys.argv[2]) if len(sys.argv) > 2 else 16
+enc_dir = sys.argv[1]; cuts = [int(c) for c in (sys.argv[2] if len(sys.argv) > 2 else "8,20").split(",")]
 src_dir = os.path.join(enc_dir, "onnx"); src = os.path.join(src_dir, "text_encoder_int4.onnx")
 m = onnx.load(src, load_external_data=False)
 inits = {t.name: t for t in m.graph.initializer}
@@ -28,14 +28,14 @@ graph_in = {i.name: i for i in m.graph.input}
 
 def layer_of(n):
     r = re.search(r"/model/layers\.(\d+)/", n.name); return int(r.group(1)) if r else None
-H = None
-for n in m.graph.node:
-    if layer_of(n) == cut and "input_layernorm" in n.name and n.op_type != "Constant":
-        for i in n.input:
-            p = prod.get(i)
-            if i not in inits and p is not None and (layer_of(p) or 0) < cut: H = i
-        if H: break
-assert H, "boundary tensor not found"
+def boundary(cut):
+    for n in m.graph.node:
+        if layer_of(n) == cut and "input_layernorm" in n.name and n.op_type != "Constant":
+            for i in n.input:
+                p = prod.get(i)
+                if i not in inits and p is not None and (layer_of(p) or 0) < cut: return i
+    raise SystemExit(f"boundary tensor for layer {cut} not found")
+H = [boundary(c) for c in cuts]
 
 def closure(outputs, stop):
     seen, nodes, stack = set(), [], list(outputs)
@@ -46,17 +46,16 @@ def closure(outputs, stop):
         if n is None: continue
         nodes.append(n); stack.extend(n.input)
     return nodes
-B_nodes = closure(["text_embedding"], stop={H}); B_names = {n.name for n in B_nodes}
-A_nodes = closure([H], stop=set())
-A_names = {n.name for n in A_nodes}
-A_out = {o for n in A_nodes for o in n.output}
-b_needs = {i for n in B_nodes for i in n.input if i and i not in inits}
-cross = sorted(t for t in b_needs if t in A_out); b_graph_in = sorted(t for t in b_needs if t in graph_in)
-# The mask / rotary-embedding prefix is needed by both halves; it has no weights, so B simply recomputes it
-# from attention_mask instead of receiving it from A. The only tensor that crosses is the hidden state.
-shared = len(A_names & B_names)
-print(f"boundary {H}; A {len(A_nodes)} nodes, B {len(B_nodes)} nodes ({shared} prefix nodes shared); B reads inputs {b_graph_in}")
-assert H in cross
+# part k computes from boundary k-1 (or the graph inputs) to boundary k (or text_embedding);
+# the mask / rotary prefix has no weights and is simply recomputed inside every part.
+targets = H + ["text_embedding"]
+parts = []
+for k, tgt in enumerate(targets):
+    stop = {H[k - 1]} if k > 0 else set()
+    nodes = closure([tgt], stop=stop)
+    reads = {i for n in nodes for i in n.input if i and i not in inits}
+    parts.append({"name": f"part_{chr(97 + k)}", "nodes": nodes, "in_hidden": H[k - 1] if k > 0 else None, "out": tgt, "graph_inputs": sorted(t for t in reads if t in graph_in)})
+    print(f"  {parts[-1]['name']}: {len(nodes)} nodes, hidden in {parts[-1]['in_hidden']}, out {tgt}, reads {parts[-1]['graph_inputs']}")
 
 # keep original node order
 order = {n.name: i for i, n in enumerate(m.graph.node)}
@@ -72,15 +71,17 @@ def build(name, nodes, inputs, outputs):
     out = os.path.join(src_dir, f"{name}.onnx")
     onnx.save_model(mp, out, save_as_external_data=True, all_tensors_to_one_file=True, location=f"{name}.onnx.data", size_threshold=0)
     print(f"  {name}: {len(nodes)} nodes, {len(tensors)} initializers, data {os.path.getsize(out + '.data') / 1e9:.2f} GB")
-hidden_vi = helper.make_tensor_value_info(H, TensorProto.FLOAT16, [1, 64, 4096])
 t0 = time.time()
-build("part_a", A_nodes, [graph_in[k] for k in sorted(graph_in) if k in {i for n in A_nodes for i in n.input}], [hidden_vi])
-build("part_b", B_nodes, [hidden_vi] + [graph_in[k] for k in b_graph_in], [o for o in m.graph.output])
+vi = lambda name: helper.make_tensor_value_info(name, TensorProto.FLOAT16, [1, 64, 4096])
+for pt in parts:
+    ins = ([vi(pt["in_hidden"])] if pt["in_hidden"] else []) + [graph_in[k] for k in pt["graph_inputs"]]
+    outs = [o for o in m.graph.output] if pt["out"] == "text_embedding" else [vi(pt["out"])]
+    build(pt["name"], pt["nodes"], ins, outs)
 print(f"split written in {time.time() - t0:.0f} s")
 def io(path, which):
     mp = onnx.load(path, load_external_data=False)
     return [{"name": v.name, "dtype": TensorProto.DataType.Name(v.type.tensor_type.elem_type).lower(), "shape": [d.dim_value or d.dim_param for d in v.type.tensor_type.shape.dim]} for v in getattr(mp.graph, which)]
-manifest = {"seq": 64, "llm_dim": 4096, "cut_layer": cut, "parts": [{"name": p, "inputs": io(os.path.join(src_dir, p + ".onnx"), "input"), "outputs": io(os.path.join(src_dir, p + ".onnx"), "output")} for p in ("part_a", "part_b")]}
+manifest = {"seq": 64, "llm_dim": 4096, "cut_layers": cuts, "parts": [{"name": pt["name"], "size_bytes": os.path.getsize(os.path.join(src_dir, pt["name"] + ".onnx.data")), "inputs": io(os.path.join(src_dir, pt["name"] + ".onnx"), "input"), "outputs": io(os.path.join(src_dir, pt["name"] + ".onnx"), "output")} for pt in parts]}
 json.dump(manifest, open(os.path.join(enc_dir, "encoder.json"), "w"), indent=1)
 
 # --- verify A∘B against the full graph (CPU) --------------------------------------------------------------
@@ -91,6 +92,10 @@ ii = np.full((1, L), 128009, np.int64); am = np.zeros((1, L), np.int64); em = np
 for i, t in enumerate(seq): ii[0, pad + i] = t; am[0, pad + i] = 1; em[0, pad + i] = int(i >= ps)
 feed = {"input_ids": ii, "attention_mask": am, "embed_mask": em}
 full = ort.InferenceSession(src, providers=["CPUExecutionProvider"]).run(None, feed)[0]
-sa = ort.InferenceSession(os.path.join(src_dir, "part_a.onnx"), providers=["CPUExecutionProvider"]); a_out = dict(zip([o.name for o in sa.get_outputs()], sa.run(None, {k: v for k, v in feed.items() if k in {i.name for i in sa.get_inputs()}})))
-sb = ort.InferenceSession(os.path.join(src_dir, "part_b.onnx"), providers=["CPUExecutionProvider"]); split = sb.run(None, {i.name: a_out.get(i.name, feed.get(i.name)) for i in sb.get_inputs()})[0]
-cos = float(np.dot(full[0], split[0]) / (np.linalg.norm(full[0]) * np.linalg.norm(split[0]))); print(f"A∘B vs full: cosine {cos:.6f}, max|d| {np.abs(full - split).max():.3e}")
+state = dict(feed)
+for pt in parts:
+    sess = ort.InferenceSession(os.path.join(src_dir, pt["name"] + ".onnx"), providers=["CPUExecutionProvider"])
+    outs = sess.run(None, {i.name: state[i.name] for i in sess.get_inputs()})
+    state.update(dict(zip([o.name for o in sess.get_outputs()], outs)))
+split = state["text_embedding"]
+cos = float(np.dot(full[0], split[0]) / (np.linalg.norm(full[0]) * np.linalg.norm(split[0]))); print(f"chained parts vs full: cosine {cos:.6f}, max|d| {np.abs(full - split).max():.3e}")
