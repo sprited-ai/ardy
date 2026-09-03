@@ -55,8 +55,9 @@
     <details><summary>Prompt List</summary><div class="body presets" id="presets"></div></details>
     <div class="ctl"><label>Prompt</label><select id="promptSel"></select></div>
     <button class="wide green" id="updatePrompt">Update Text Prompt</button>
-    <details><summary>Free-text prompts (optional, 5 GB)</summary><div class="body">
-      <p class="hint">Downloads the Llama-3 LLM2Vec text encoder as INT4 ONNX (TREE Industries' export, ~5 GB, cached) and runs it on your GPU. Desktop with 16 GB+ recommended.</p>
+    <details><summary>Free-text prompts (optional download)</summary><div class="body">
+      <div class="ctl"><label>Encoder</label><span><label style="display:inline"><input type="radio" name="encKind" value="small" checked> small · MiniLM student, 110 MB, any device</label><br><label style="display:inline"><input type="radio" name="encKind" value="exact"> exact · Llama-3-8B LLM2Vec INT4, 5 GB, 16 GB+ desktop</label></span></div>
+      <p class="hint">small: intsuc's distilled encoder (cosine 0.98 root / 0.96 body vs the real one). exact: ARDY's own encoder in three Web Workers.</p>
       <button class="wide secondary" id="enableEncoder">Enable free-text prompts</button>
       <div class="ctl"><label>Custom prompt</label><input type="text" id="customPrompt" placeholder="a person walks forward calmly" disabled></div>
       <button class="wide" id="encodePrompt" disabled>Encode & use prompt</button>
