@@ -43,7 +43,13 @@ URL flags: `?models=local|hf|<prefix/>` (default: `./models/` if present, else H
   Restart From Now, seeded noise. `app/viewer.js` poses the Core skin with linear blend skinning
   (`ardy/viz/core_skin.py` math) from the graph's joint positions and rotations. `app/timeline.js` is the demo's
   timeline (frame ruler, prompt segments, constraint track rows, draggable cursor).
-- Text prompts come from a precomputed embedding library; the 8B LLM2Vec encoder does not run in a browser.
+- Text prompts come from a precomputed embedding library (20 prompts). **Free-text prompts** are optional: the Text tab
+  can download the Llama-3 LLM2Vec encoder as INT4 ONNX (three parts, 5 GB, from
+  [sprited/ardy-web-onnx/text-encoder](https://huggingface.co/sprited/ardy-web-onnx/tree/main/text-encoder)) and run it
+  in three Web Workers, one onnxruntime-web instance each (a single instance cannot hold more than ~2 GB of weights).
+  `app/text_encoder.js` tokenizes exactly like ARDY (Llama-3 user header, left padding to 64, `embed_mask` on the prompt
+  tokens) and chains the parts. Built by `build_text_encoder_onnx.py` (ARDY's merged weights, re-quantized to 4-bit
+  MatMulNBits; the source graph's causal mask replaced by a bidirectional one) and `split_text_encoder.py`.
 
 ## Measured (M1 Pro 16 GB, Chrome 152, fp32 graph)
 
