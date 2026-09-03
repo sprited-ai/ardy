@@ -2,7 +2,7 @@
 // Hugging Face (sprited/ardy-web-onnx) or, during development, from ./models next to the page.
 const HF = 'https://huggingface.co/sprited/ardy-web-onnx/resolve/main/';
 export const MODELS = {
-  'core-rp-20fps-h40': { label: 'ARDY-Core-RP-20FPS-Horizon40', skeleton: 'cskel27', size_mb: 813, hf: HF + 'core-rp-20fps-h40/' },
+  'core-rp-20fps-h40': { label: 'ARDY-Core-RP-20FPS-Horizon40', skeleton: 'cskel27', size_mb: 779, hf: HF + 'core-rp-20fps-h40/' },
 };
 export const DEFAULT_MODEL = 'core-rp-20fps-h40';
 
@@ -41,6 +41,7 @@ export async function fetchModel(url, onProgress, { gunzip = false } = {}) {
   const reader = body.getReader(); const chunks = []; let got = 0;
   for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; onProgress && onProgress({ got, total }); }
   const out = new Uint8Array(got); let o = 0; for (const ch of chunks) { out.set(ch, o); o += ch.length; }
+  chunks.length = 0; // release the streamed chunks before the cache write doubles the footprint
   if (cache) { try { await cache.put(url, new Response(out, { headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String(got) } })); } catch (e) { console.warn('cache put failed', e); } }
   return out;
 }

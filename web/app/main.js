@@ -42,7 +42,7 @@ const modelUrl = base + (cfg.onnx || 'window.onnx');
 $('cacheState').value = (await isCached(modelUrl)) ? 'cached' : 'not cached';
 if (!(await confirmDownload(modelId, modelUrl))) { status('Download declined. Reload to try again.'); throw new Error('declined'); }
 status('downloading model…');
-const bytes = await fetchModel(modelUrl, (p) => { if (p.cached) { status('loading cached model…'); $('loading').style.transform = 'scaleX(1)'; } else { $('loading').style.transform = `scaleX(${p.total ? p.got / p.total : 0})`; status(`downloading ${(p.got / 1e6).toFixed(0)} / ${(p.total / 1e6).toFixed(0)} MB`); } });
+let bytes = await fetchModel(modelUrl, (p) => { if (p.cached) { status('loading cached model…'); $('loading').style.transform = 'scaleX(1)'; } else { $('loading').style.transform = `scaleX(${p.total ? p.got / p.total : 0})`; status(`downloading ${(p.got / 1e6).toFixed(0)} / ${(p.total / 1e6).toFixed(0)} MB`); } });
 $('cacheState').value = 'cached';
 ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.29.0/dist/';
 let session = null, backend = null;
@@ -50,11 +50,11 @@ for (const ep of (params.get('backend') ? [params.get('backend')] : navigator.gp
   try { status(`creating ${ep} session…`); const t0 = performance.now(); session = await ort.InferenceSession.create(bytes, { executionProviders: [ep], graphOptimizationLevel: 'all' }); backend = ep; status(`ready on ${ep} (${((performance.now() - t0) / 1000).toFixed(1)} s)`, true); break; } catch (e) { console.warn(ep, e); }
 }
 if (!session) { status('no WebGPU/WASM backend available'); throw new Error('no backend'); }
+bytes = null; // ORT owns its own copy (wasm heap + GPU); dropping ours saves ~0.8 GB of renderer memory
 $('loading').style.transform = 'scaleX(0)'; $('backend').value = backend;
 // text_proj: LLM2Vec feature (4096) -> the denoiser's text conditions (2048); tiny, used for presets and the 8B encoder
 const LLM_DIM = cfg.llm_dim;
-const projBytes = await fetchModel(base + (cfg.text_proj || 'text_proj.onnx'));
-const projSession = await ort.InferenceSession.create(projBytes, { executionProviders: [backend, 'wasm'] });
+const projSession = await ort.InferenceSession.create(await fetchModel(base + (cfg.text_proj || 'text_proj.onnx')), { executionProviders: [backend, 'wasm'] });
 async function projectFeat(feat4096) { const out = await projSession.run({ text_feat: new ort.Tensor('float32', feat4096, [1, 1, LLM_DIM]) }); return Float32Array.from(out.cond.data); }
 const presetConds = []; for (let i = 0; i < promptsMeta.prompts.length; i++) presetConds.push(await projectFeat(promptFeats.subarray(i * LLM_DIM, (i + 1) * LLM_DIM)));
 const engine = new Engine(session, cfg, skeleton, presetConds, promptsMeta.prompts); engine.backend = backend;
