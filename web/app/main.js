@@ -4,6 +4,7 @@ import { MODELS, DEFAULT_MODEL, resolveBase, fetchModel, confirmDownload, isCach
 import { Engine } from './engine.js';
 import { Viewer } from './viewer.js';
 import { Timeline, PROMPT_COLORS } from './timeline.js';
+import { ENCODER, loadTextEncoder, encodePrompt, textEncoderState } from './text_encoder.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (s, ok) => { $('status').textContent = s; $('dot').classList.toggle('ok', !!ok); console.log('[ardy-web]', s); };
@@ -74,6 +75,24 @@ function updatePrompt() {
   const next = state.frame + 1; engine.schedulePrompt(next, pi); toast('Text prompt updated', `New prompt starts at frame ${next}`, ''); replanFrom(state.frame, pi);
 }
 $('updatePrompt').onclick = updatePrompt;
+// free-text prompts (optional 5 GB encoder download)
+$('enableEncoder').onclick = async () => {
+  $('enableEncoder').disabled = true;
+  try {
+    const ok = await loadTextEncoder((p) => { if (p.stage === 'download') { $('encStatus').textContent = `downloading ${(p.got / 1e6).toFixed(0)} / ${(p.total / 1e6).toFixed(0)} MB`; $('loading').style.transform = `scaleX(${p.total ? p.got / p.total : 0})`; } else $('encStatus').textContent = p.cached ? 'loading cached encoder…' : `${p.stage}${p.ep ? ' (' + p.ep + ')' : ''}…`; });
+    $('loading').style.transform = 'scaleX(0)';
+    if (!ok) { $('encStatus').textContent = 'download declined'; $('enableEncoder').disabled = false; return; }
+    $('encStatus').textContent = `text encoder ready on ${textEncoderState().backend}`; $('customPrompt').disabled = $('encodePrompt').disabled = false; toast('Text encoder ready', ENCODER.label, 'green');
+  } catch (e) { $('encStatus').textContent = 'failed: ' + (e.message || e); $('enableEncoder').disabled = false; console.error(e); }
+};
+$('encodePrompt').onclick = async () => {
+  const text = $('customPrompt').value.trim(); if (!text) return;
+  $('encodePrompt').disabled = true; $('encStatus').textContent = 'encoding…';
+  try { const { feat, ms } = await encodePrompt(text); const idx = engine.addPrompt(text, feat); promptsMeta.prompts.push(text);
+    const o = document.createElement('option'); o.value = idx; o.textContent = text; $('promptSel').appendChild(o); $('promptSel').value = idx;
+    $('encStatus').textContent = `encoded in ${ms.toFixed(0)} ms`; updatePrompt();
+  } catch (e) { $('encStatus').textContent = 'encode failed: ' + (e.message || e); console.error(e); } finally { $('encodePrompt').disabled = false; }
+};
 $('restartBtn').onclick = () => { engine.reset(); state.frame = 0; state.nowPlaying = state.nowCompute = null; $('activePrompt').textContent = promptsMeta.prompts[+$('promptSel').value]; viewer.setStartArrow([0, 0, 0], 0); schedule('restart'); };
 $('restartNowBtn').onclick = () => replanFrom(state.frame, +$('promptSel').value);
 $('cfg').oninput = () => { $('cfgv').textContent = $('cfg').value; engine.cfgText = +$('cfg').value; };
