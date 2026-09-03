@@ -38,6 +38,7 @@ try { setDark(localStorage.getItem('ardy-web-dark') === '1'); } catch (_) {}
 $('nativeFps').value = cfg.fps; $('hist').value = cfg.history_frames; $('steps').value = cfg.num_denoising_steps;
 for (const [i, p] of promptsMeta.prompts.entries()) { const o = document.createElement('option'); o.value = i; o.textContent = p; $('promptSel').appendChild(o); const b = document.createElement('button'); b.textContent = p; b.onclick = () => { $('promptSel').value = i; updatePrompt(); }; $('presets').appendChild(b); }
 
+function releaseBytes(u8) { try { if (u8 && u8.buffer.transfer) u8.buffer.transfer(0); } catch (_) {} }
 const modelUrl = base + (cfg.onnx || 'window.onnx');
 $('cacheState').value = (await isCached(modelUrl)) ? 'cached' : 'not cached';
 if (!(await confirmDownload(modelId, modelUrl))) { status('Download declined. Reload to try again.'); throw new Error('declined'); }
@@ -50,7 +51,9 @@ for (const ep of (params.get('backend') ? [params.get('backend')] : navigator.gp
   try { status(`creating ${ep} session…`); const t0 = performance.now(); session = await ort.InferenceSession.create(bytes, { executionProviders: [ep], graphOptimizationLevel: 'all' }); backend = ep; status(`ready on ${ep} (${((performance.now() - t0) / 1000).toFixed(1)} s)`, true); break; } catch (e) { console.warn(ep, e); }
 }
 if (!session) { status('no WebGPU/WASM backend available'); throw new Error('no backend'); }
-bytes = null; // ORT owns its own copy (wasm heap + GPU); dropping ours saves ~0.8 GB of renderer memory
+// ORT copied the graph into its own heap. Detach our buffer now: V8 only reclaims a dropped ArrayBuffer at the next
+// major GC, which a page with a tiny JS heap may not run for minutes, so `bytes = null` alone kept ~0.8 GB resident.
+releaseBytes(bytes); bytes = null;
 $('loading').style.transform = 'scaleX(0)'; $('backend').value = backend;
 // text_proj: LLM2Vec feature (4096) -> the denoiser's text conditions (2048); tiny, used for presets and the 8B encoder
 const LLM_DIM = cfg.llm_dim;
