@@ -12,6 +12,7 @@ async function fetchCached(url, onProgress) {
   const total = +r.headers.get('Content-Length') || 0; const reader = r.body.getReader(); const chunks = []; let got = 0;
   for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; onProgress({ got, total }); }
   const out = new Uint8Array(got); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; }
+  chunks.length = 0;
   if (cache) { try { await cache.put(url, new Response(out, { headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String(got) } })); } catch (e) { console.warn('cache put failed', e); } }
   return out;
 }
@@ -24,6 +25,8 @@ self.onmessage = async (e) => {
       const data = await fetchCached(`${msg.base}onnx/${msg.part}.onnx.data`, progress);
       self.postMessage({ type: 'progress', part: msg.part, stage: 'session' });
       session = await ort.InferenceSession.create(graph, { executionProviders: [msg.ep], graphOptimizationLevel: 'all', externalData: [{ path: `${msg.part}.onnx.data`, data }] });
+      // ORT holds its own copies now; detach ours immediately (a dropped ArrayBuffer waits for a rare major GC otherwise)
+      for (const u8 of [graph, data]) { try { u8.buffer.transfer(0); } catch (_) {} }
       self.postMessage({ type: 'ready', part: msg.part, inputs: session.inputNames, outputs: session.outputNames });
     } else if (msg.type === 'run') {
       const feeds = {}; for (const [k, v] of Object.entries(msg.feeds)) if (session.inputNames.includes(k)) feeds[k] = new ort.Tensor(v.type, v.data, v.dims);

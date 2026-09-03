@@ -29,7 +29,7 @@ async function loadSmall(onProgress) {
   tokenizer = new tf.PreTrainedTokenizer(tokJSON, tokCfg);
   const bytes = await fetchModel(b + 'text_encoder.onnx.gz', (p) => onProgress && onProgress({ part: 'text_encoder', ...p }), { gunzip: true });
   for (const ep of (params.get('backend') ? [params.get('backend')] : navigator.gpu ? ['webgpu', 'wasm'] : ['wasm'])) {
-    try { onProgress && onProgress({ stage: 'session', ep }); smallSession = await ort.InferenceSession.create(bytes, { executionProviders: [ep] }); state.backend = ep; return; } catch (e) { console.warn('small encoder', ep, e); }
+    try { onProgress && onProgress({ stage: 'session', ep }); smallSession = await ort.InferenceSession.create(bytes, { executionProviders: [ep] }); state.backend = ep; try { bytes.buffer.transfer(0); } catch (_) {} return; } catch (e) { console.warn('small encoder', ep, e); }
   }
   throw new Error('small encoder: no backend');
 }
